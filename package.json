@@ -1,0 +1,22 @@
+{
+  "name": "audiomancer",
+  "version": "0.0.1",
+  "description": "Cast sounds in a multichannel space",
+  "author": "Jean-Philippe Drecourt",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint . && prettier --write . --log-level silent",
+    "start": "parcel && npm run static"
+  },
+  "devDependencies": {
+    "eslint": "latest",
+    "prettier": "latest",
+    "stylelint": "latest",
+    "stylelint-config-standard": "latest",
+    "globals": "^15.14.0"
+  },
+  "dependencies": {
+    "max-api": "latest"
+  },
+  "source": "./src/index.html"
+}

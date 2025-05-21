@@ -1,0 +1,12 @@
+[
+  {
+    "text": "play sound",
+    "type": "command",
+    "metadata": {}
+  },
+  {
+    "text": "hello world",
+    "type": "command",
+    "metadata": {}
+  }
+]
