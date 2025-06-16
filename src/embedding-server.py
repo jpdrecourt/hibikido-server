@@ -64,7 +64,7 @@ def save_entries(entries: List[dict]) -> None:
 # ─── Initialise model, FAISS index, and OSC client ─────────────────────────
 try:
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = SentenceTransformer(MODEL_NAME, device=device)
+    model = SentenceTransformer(MODEL_NAME, device=device, local_files_only=True)
     print(f"[INIT] Embedding model loaded on: {device.upper()}")
 except Exception as e:
     print(f"[WARN] Failed to load model on GPU, falling back to CPU: {e}")
@@ -89,7 +89,7 @@ print(f"[INIT] FAISS index initialized on: {faiss_device}")
 # ─── OSC Callbacks ─────────────────────────────────────────────────────────
 
 def handle_text(_: str, *args: List[str]) -> None:
-    """Process a /text query: lower‑case input, embed, search, return kebab‑case matches."""
+    """Process a /text query: lower-case input, embed, search, return kebab-case matches."""
     if not args:
         print("[WARN] Received /text with no arguments.")
         return
@@ -121,7 +121,7 @@ def handle_text(_: str, *args: List[str]) -> None:
     print(f"[INFO] Sent {len(flat)//3} matches.")
 
 def handle_add(_: str, *args: List[str]) -> None:
-    """Add or replace an entry. Always store text in lower‑case."""
+    """Add or replace an entry. Always store text in lower-case."""
     global index
     if len(args) < 2:
         msg = "/add requires at least type and text."

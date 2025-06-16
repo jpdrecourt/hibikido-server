@@ -1,11 +1,11 @@
 [
   {
-    "text": "play sound",
+    "text": "hello world",
     "type": "command",
     "metadata": {}
   },
   {
-    "text": "hello world",
+    "text": "play sound",
     "type": "command",
     "metadata": {}
   }

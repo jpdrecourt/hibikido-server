@@ -39,3 +39,7 @@ yarn-error.log*
 # Cache
 .parcel-cache/
 .eslintcache
+
+# Embeddings
+src/entries.json
+src/unified.index
