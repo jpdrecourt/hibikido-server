@@ -10,11 +10,87 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 670.0, 376.0, 1198.0, 956.0 ],
+		"rect" : [ 612.0, 374.0, 1198.0, 956.0 ],
 		"gridonopen" : 2,
 		"gridsize" : [ 15.0, 15.0 ],
 		"subpatcher_template" : "Default with Grid",
 		"boxes" : [ 			{
+				"box" : 				{
+					"id" : "obj-25",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 2,
+					"outlettype" : [ "", "" ],
+					"patching_rect" : [ 664.0, 741.0, 100.0, 22.0 ],
+					"saved_object_attributes" : 					{
+						"autostart" : 0,
+						"defer" : 0,
+						"node_bin_path" : "",
+						"npm_bin_path" : "",
+						"watch" : 0
+					}
+,
+					"text" : "node.script",
+					"textfile" : 					{
+						"text" : "",
+						"flags" : 2,
+						"embed" : 1,
+						"autowatch" : 0
+					}
+
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-23",
+					"maxclass" : "message",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 435.0, 244.0, 35.0, 22.0 ],
+					"text" : "/stop"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-19",
+					"maxclass" : "newobj",
+					"numinlets" : 2,
+					"numoutlets" : 2,
+					"outlettype" : [ "", "" ],
+					"patching_rect" : [ 36.5, 339.0, 59.0, 22.0 ],
+					"text" : "route text"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-17",
+					"linecount" : 4,
+					"maxclass" : "message",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 586.0, 329.0, 560.0, 64.0 ],
+					"text" : "/add \"soft wind across metal\", /add \"children footsteps on gravel\", /add \"distant machinery rumble\", /add \"resonant drip in tunnel\", /add \"high-pitched cicadas field\", /add \"stone thrown into lake\", /add \"underwater humming engine\", /add \"rain on plastic tarp\", /add \"wooden bell shaken\", /add \"metallic clang reverb tail\", /add \"deep voice echoing corridor\", /add \"rustling leaves with birdsong\","
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-13",
+					"maxclass" : "message",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 785.0, 70.0, 230.0, 22.0 ],
+					"text" : "/add 10 \"Life the universe and everything\""
+				}
+
+			}
+, 			{
 				"box" : 				{
 					"id" : "obj-27",
 					"linecount" : 2,
@@ -22,8 +98,8 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 368.0, 604.0, 232.0, 36.0 ],
-					"text" : ";\r\nmax launchbrowser embedding-server.bat"
+					"patching_rect" : [ 368.0, 604.0, 231.0, 36.0 ],
+					"text" : ";\r\nmax launchbrowser incantation-server.bat"
 				}
 
 			}
@@ -34,7 +110,7 @@
 					"numinlets" : 0,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 979.0, 197.0, 107.0, 22.0 ],
+					"patching_rect" : [ 987.0, 461.0, 107.0, 22.0 ],
 					"text" : "r #0-embed-server"
 				}
 
@@ -45,7 +121,7 @@
 					"maxclass" : "newobj",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 36.5, 360.0, 109.0, 22.0 ],
+					"patching_rect" : [ 36.5, 416.0, 109.0, 22.0 ],
 					"text" : "s #0-embed-server"
 				}
 
@@ -58,18 +134,6 @@
 					"numoutlets" : 0,
 					"patching_rect" : [ 668.0, 240.0, 109.0, 22.0 ],
 					"text" : "s #0-embed-server"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-21",
-					"maxclass" : "newobj",
-					"numinlets" : 2,
-					"numoutlets" : 2,
-					"outlettype" : [ "", "" ],
-					"patching_rect" : [ 36.5, 324.0, 59.0, 22.0 ],
-					"text" : "route text"
 				}
 
 			}
@@ -124,8 +188,8 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 933.0, 115.0, 161.0, 22.0 ],
-					"text" : "/add command \"Play Sound\""
+					"patching_rect" : [ 933.0, 115.0, 115.0, 22.0 ],
+					"text" : "/add 4 \"Play Sound\""
 				}
 
 			}
@@ -168,13 +232,12 @@
 , 			{
 				"box" : 				{
 					"id" : "obj-12",
-					"linecount" : 2,
 					"maxclass" : "message",
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 790.0, 119.0, 126.0, 36.0 ],
-					"text" : "/add command \"Hello world\""
+					"patching_rect" : [ 790.0, 119.0, 113.0, 22.0 ],
+					"text" : "/add 1 \"Hello world\""
 				}
 
 			}
@@ -196,7 +259,7 @@
 					"maxclass" : "newobj",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 979.0, 303.0, 32.0, 22.0 ],
+					"patching_rect" : [ 987.0, 567.0, 32.0, 22.0 ],
 					"text" : "print"
 				}
 
@@ -208,7 +271,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 979.0, 268.0, 97.0, 22.0 ],
+					"patching_rect" : [ 987.0, 532.0, 97.0, 22.0 ],
 					"text" : "udpreceive 9001"
 				}
 
@@ -219,7 +282,7 @@
 					"maxclass" : "newobj",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 979.0, 230.0, 138.0, 22.0 ],
+					"patching_rect" : [ 987.0, 494.0, 138.0, 22.0 ],
 					"text" : "udpsend 127.0.0.1 9000"
 				}
 
@@ -308,6 +371,13 @@
 			}
 , 			{
 				"patchline" : 				{
+					"destination" : [ "obj-5", 0 ],
+					"source" : [ "obj-13", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
 					"destination" : [ "obj-58", 0 ],
 					"source" : [ "obj-14", 0 ]
 				}
@@ -323,7 +393,21 @@
 , 			{
 				"patchline" : 				{
 					"destination" : [ "obj-5", 0 ],
+					"source" : [ "obj-17", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-5", 0 ],
 					"source" : [ "obj-18", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-6", 0 ],
+					"source" : [ "obj-19", 0 ]
 				}
 
 			}
@@ -343,15 +427,15 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-6", 0 ],
-					"source" : [ "obj-21", 0 ]
+					"destination" : [ "obj-5", 0 ],
+					"source" : [ "obj-22", 0 ]
 				}
 
 			}
 , 			{
 				"patchline" : 				{
 					"destination" : [ "obj-5", 0 ],
-					"source" : [ "obj-22", 0 ]
+					"source" : [ "obj-23", 0 ]
 				}
 
 			}
@@ -414,7 +498,7 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-21", 0 ],
+					"destination" : [ "obj-19", 0 ],
 					"order" : 0,
 					"source" : [ "obj-9", 0 ]
 				}
@@ -430,7 +514,14 @@
 
 			}
  ],
-		"dependency_cache" : [  ],
+		"dependency_cache" : [ 			{
+				"name" : "u552000428.js",
+				"bootpath" : "~/AppData/Roaming/Cycling '74/Max 9/Settings/temp64-Max",
+				"patcherrelativepath" : "../../../../../AppData/Roaming/Cycling '74/Max 9/Settings/temp64-Max",
+				"type" : "TEXT",
+				"implicit" : 1
+			}
+ ],
 		"autosave" : 0
 	}
 

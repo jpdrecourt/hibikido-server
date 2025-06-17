@@ -43,3 +43,4 @@ yarn-error.log*
 # Embeddings
 src/entries.json
 src/unified.index
+src/Sounds.csv
