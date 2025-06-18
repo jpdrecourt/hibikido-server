@@ -1,448 +1,277 @@
 """
-Text Processor for Incantation Server
-====================================
+Text Processor for Hibikidō (Updated)
+=====================================
 
-Utilities for creating optimized embedding sentences from CSV data
-and other text processing tasks.
+Creates optimized embedding text from hierarchical context.
+Priority: segment > segmentation > recording (local > broader)
+Target: 15 words, hard limit: 20 words
 """
 
 import re
 from typing import Dict, Any, List, Optional
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
+# Try to import spaCy, fallback to simple processing if not available
+try:
+    import spacy
+    SPACY_AVAILABLE = True
+    logger.info("spaCy available for text processing")
+except ImportError:
+    SPACY_AVAILABLE = False
+    logger.info("spaCy not available, using simple text processing")
+
 class TextProcessor:
     def __init__(self):
-        # Musical and audio descriptive terms that enhance semantic understanding
-        self.audio_descriptors = {
-            'percussion': ['drums', 'beats', 'rhythm', 'percussive'],
-            'melodic': ['melody', 'melodic', 'harmonic', 'musical'],
-            'ambient': ['atmosphere', 'ambient', 'spacious', 'ethereal'],
-            'texture': ['smooth', 'rough', 'gritty', 'clean', 'distorted'],
-            'dynamics': ['loud', 'quiet', 'soft', 'intense', 'gentle'],
-            'temporal': ['fast', 'slow', 'quick', 'sustained', 'short'],
-            'tonal': ['bright', 'dark', 'warm', 'cold', 'rich', 'thin']
+        self.nlp = None
+        
+        # Initialize spaCy if available
+        if SPACY_AVAILABLE:
+            try:
+                self.nlp = spacy.load("en_core_web_sm")
+                logger.info("spaCy model loaded successfully")
+            except OSError:
+                logger.warning("spaCy model 'en_core_web_sm' not found, falling back to simple processing")
+                # Don't modify global SPACY_AVAILABLE, just note locally
+                self.spacy_working = False
+            else:
+                self.spacy_working = True
+        else:
+            self.spacy_working = False
+        
+        # Audio-specific stop words to remove (in addition to standard ones)
+        self.audio_stop_words = {
+            'sound', 'audio', 'recording', 'sample', 'track', 'file', 'piece'
         }
     
-    def create_embedding_sentence(self, entry: Dict[str, Any]) -> str:
+    def create_segment_embedding_text(self, segment: Dict[str, Any], 
+                                    recording: Dict[str, Any] = None,
+                                    segmentation: Dict[str, Any] = None) -> str:
         """
-        Create an optimized embedding sentence from entry data.
-        Uses ONLY description and filename for semantic matching.
+        Create embedding text for a segment using hierarchical context.
+        Priority: segment > segmentation > recording
         """
         try:
-            parts = []
+            # Collect context in priority order
+            contexts = []
             
-            # Add description (primary content)
-            description = self._get_field_value(entry, ['description', 'Description'])
-            if description:
-                cleaned_desc = self._process_description(description)
-                if cleaned_desc:
-                    parts.append(cleaned_desc)
+            # Priority 1: Segment description (local)
+            segment_desc = segment.get("description", "")
+            if segment_desc:
+                contexts.append(("segment", segment_desc, 10))  # Up to 10 words
             
-            # Add filename for context (if relevant and no description)
-            if not parts:  # Only use filename if no description
-                filename = self._get_field_value(entry, ['file', 'File'])
-                if filename:
-                    cleaned_filename = self._process_filename(filename)
-                    if cleaned_filename:
-                        parts.append(cleaned_filename)
+            # Priority 2: Segmentation description (method context)
+            if segmentation:
+                seg_desc = segmentation.get("description", "")
+                if seg_desc:
+                    contexts.append(("segmentation", seg_desc, 5))  # Up to 5 words
             
-            # Combine and clean
-            sentence = ' '.join(parts)
-            sentence = self._normalize_sentence(sentence)
+            # Priority 3: Recording description (broader context)
+            if recording:
+                rec_desc = recording.get("description", "")
+                if rec_desc:
+                    contexts.append(("recording", rec_desc, 5))  # Up to 5 words
             
-            logger.debug(f"Created embedding sentence: '{sentence}' from entry {entry.get('ID', 'unknown')}")
-            return sentence
+            # Process and combine
+            final_text = self._combine_contexts(contexts, target_words=15, max_words=20)
+            
+            logger.debug(f"Segment embedding text: '{final_text}' for {segment.get('_id', 'unknown')}")
+            return final_text
             
         except Exception as e:
-            logger.error(f"Failed to create embedding sentence: {e}")
-            # Fallback to basic combination
-            return self._fallback_sentence(entry)
+            logger.error(f"Failed to create segment embedding text: {e}")
+            # Fallback to just segment description
+            return self._clean_text(segment.get("description", "audio segment"))
     
-    def _get_field_value(self, entry: Dict[str, Any], field_names: List[str]) -> str:
-        """Get field value, trying multiple possible field names."""
-        for field_name in field_names:
-            if field_name in entry:
-                value = entry[field_name]
-                if value and not self._is_na(value):
-                    return str(value).strip()
-        return ""
-    
-    def _is_na(self, value) -> bool:
-        """Check if value is NaN or None."""
-        if value is None:
-            return True
-        if isinstance(value, float):
-            try:
-                import math
-                return math.isnan(value)
-            except:
-                return str(value).lower() in ['nan', 'none']
-        return False
-    
-    def _process_filename(self, filename: str) -> str:
-        """Extract meaningful terms from filename."""
-        if not filename:
-            return ""
-        
-        # Get just the filename without path
-        filename = os.path.basename(filename)
-        
-        # Remove file extension
-        filename = os.path.splitext(filename)[0]
-        
-        # Clean the filename
-        cleaned = self._clean_text(filename)
-        
-        return cleaned
-    
-    def _clean_text(self, text: str) -> str:
-        """Clean and normalize text."""
-        if not text:
-            return ""
-        
-        # Convert to string and clean
-        text = str(text).strip()
-        
-        # Remove weird characters like # that showed up in your data
-        text = re.sub(r'[#\[\]{}()"]', '', text)
-        
-        # Replace underscores, hyphens, and dots with spaces
-        text = re.sub(r'[_\-\.]', ' ', text)
-        
-        # Remove extra whitespace
-        text = re.sub(r'\s+', ' ', text)
-        
-        return text.lower()
-    
-    def _process_description(self, description: str) -> str:
-        """Process description text to be more semantic."""
-        desc = self._clean_text(description)
-        if not desc:
-            return ""
-        
-        # Convert technical terms to more natural language
-        replacements = {
-            'freq': 'frequency',
-            'hz': 'hertz',
-            'db': 'decibel',
-            'eq': 'equalized',
-            'fx': 'effects',
-            'reverb': 'reverberation',
-            'dist': 'distortion',
-            'comp': 'compression'
-        }
-        
-        for abbrev, full in replacements.items():
-            desc = re.sub(r'\b' + abbrev + r'\b', full, desc)
-        
-        return desc
-    
-    def _normalize_sentence(self, sentence: str) -> str:
-        """Final normalization of the embedding sentence."""
-        if not sentence:
-            return ""
-        
-        # Clean up the sentence
-        sentence = re.sub(r'\s+', ' ', sentence)  # Multiple spaces
-        sentence = re.sub(r'[^\w\s]', ' ', sentence)  # Non-alphanumeric except spaces
-        sentence = re.sub(r'\s+', ' ', sentence)  # Clean up again
-        
-        return sentence.strip().lower()
-    
-    def _fallback_sentence(self, entry: Dict[str, Any]) -> str:
-        """Fallback sentence creation for error cases."""
+    def create_preset_embedding_text(self, preset: Dict[str, Any],
+                                   effect: Dict[str, Any] = None) -> str:
+        """
+        Create embedding text for an effect preset.
+        Priority: preset > effect
+        """
         try:
-            # Try description first
-            desc = self._get_field_value(entry, ['description', 'Description'])
-            if desc:
-                return self._clean_text(desc)
+            contexts = []
             
-            # Try filename
-            filename = self._get_field_value(entry, ['file', 'File'])
-            if filename:
-                return self._process_filename(filename)
+            # Priority 1: Preset description (local)
+            preset_desc = preset.get("description", "")
+            if preset_desc:
+                contexts.append(("preset", preset_desc, 12))  # Up to 12 words
             
-            # Last resort
-            return "audio sample"
-        except:
-            return "audio sample"
+            # Priority 2: Effect description (broader context)
+            if effect:
+                effect_desc = effect.get("description", "")
+                if effect_desc:
+                    contexts.append(("effect", effect_desc, 8))  # Up to 8 words
+            
+            # Process and combine
+            final_text = self._combine_contexts(contexts, target_words=15, max_words=20)
+            
+            logger.debug(f"Preset embedding text: '{final_text}' for preset in {effect.get('_id', 'unknown') if effect else 'unknown'}")
+            return final_text
+            
+        except Exception as e:
+            logger.error(f"Failed to create preset embedding text: {e}")
+            # Fallback to just preset description
+            return self._clean_text(preset.get("description", "effect preset"))
     
-    def enhance_query(self, query: str) -> str:
-        """Enhance user queries for better matching."""
-        query = self._clean_text(query)
-        if not query:
+    def _combine_contexts(self, contexts: List[tuple], target_words: int = 15, max_words: int = 20) -> str:
+        """
+        Combine contexts intelligently, respecting word limits and priorities.
+        
+        Args:
+            contexts: List of (type, text, max_words) tuples in priority order
+            target_words: Aim for this many words
+            max_words: Hard limit
+        """
+        if not contexts:
             return ""
         
-        # Expand common abbreviations
-        expansions = {
-            'fx': 'effects',
-            'perc': 'percussion',
-            'amb': 'ambient',
-            'atmo': 'atmosphere',
-            'synth': 'synthesizer'
-        }
+        combined_words = []
         
-        for abbrev, expansion in expansions.items():
-            query = re.sub(r'\b' + abbrev + r'\b', expansion, query)
+        # First pass: take words according to priority and limits
+        for context_type, text, word_limit in contexts:
+            if len(combined_words) >= max_words:
+                break
+            
+            # Process the text
+            words = self._extract_keywords(text, word_limit)
+            
+            # Add words up to our limits
+            remaining_budget = max_words - len(combined_words)
+            words_to_add = words[:min(word_limit, remaining_budget)]
+            
+            combined_words.extend(words_to_add)
         
-        return query
+        # If we're under target, try to add more from available contexts
+        if len(combined_words) < target_words:
+            for context_type, text, original_limit in contexts:
+                if len(combined_words) >= max_words:
+                    break
+                
+                # Get more words from this context
+                all_words = self._extract_keywords(text, max_words)
+                existing_from_this_context = len([w for w in combined_words 
+                                                if w in all_words[:original_limit]])
+                
+                # Add additional words beyond original limit
+                additional_words = all_words[original_limit:]
+                remaining_budget = min(target_words - len(combined_words), 
+                                     max_words - len(combined_words))
+                
+                combined_words.extend(additional_words[:remaining_budget])
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_words = []
+        for word in combined_words:
+            if word not in seen:
+                seen.add(word)
+                unique_words.append(word)
+        
+        return " ".join(unique_words[:max_words])
     
-    def extract_keywords(self, text: str) -> List[str]:
+    def _extract_keywords(self, text: str, max_words: int = None) -> List[str]:
         """Extract meaningful keywords from text."""
-        text = self._clean_text(text)
         if not text:
             return []
         
-        # Split into words and filter
-        words = text.split()
+        if self.nlp and self.spacy_working:
+            return self._extract_keywords_spacy(text, max_words)
+        else:
+            return self._extract_keywords_simple(text, max_words)
+    
+    def _extract_keywords_spacy(self, text: str, max_words: int = None) -> List[str]:
+        """Extract keywords using spaCy."""
+        try:
+            doc = self.nlp(text.lower())
+            
+            keywords = []
+            for token in doc:
+                # Skip stop words, punctuation, spaces
+                if (token.is_stop or token.is_punct or token.is_space or 
+                    len(token.text) < 2 or token.text in self.audio_stop_words):
+                    continue
+                
+                # Use lemma for better semantic matching
+                lemma = token.lemma_.strip()
+                if lemma and len(lemma) > 1:
+                    keywords.append(lemma)
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_keywords = []
+            for word in keywords:
+                if word not in seen:
+                    seen.add(word)
+                    unique_keywords.append(word)
+            
+            return unique_keywords[:max_words] if max_words else unique_keywords
+            
+        except Exception as e:
+            logger.warning(f"spaCy processing failed: {e}, falling back to simple")
+            return self._extract_keywords_simple(text, max_words)
+    
+    def _extract_keywords_simple(self, text: str, max_words: int = None) -> List[str]:
+        """Extract keywords using simple text processing."""
+        # Clean and split
+        cleaned = self._clean_text(text)
+        words = cleaned.split()
         
-        # Remove common stop words that don't help with audio search
+        # Simple stop words
         stop_words = {
-            'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
-            'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
-            'to', 'was', 'will', 'with', 'this', 'that', 'these', 'those'
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
+            'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+            'should', 'may', 'might', 'this', 'that', 'these', 'those'
         }
         
-        keywords = [word for word in words if word not in stop_words and len(word) > 2]
+        # Combine with audio stop words
+        all_stop_words = stop_words | self.audio_stop_words
         
-    def create_enhanced_embedding_sentence(self, entry: Dict[str, Any]) -> str:
-        """
-        Create an enhanced embedding sentence using all available metadata.
-        This version intelligently combines multiple fields for richer search.
-        """
-        try:
-            parts = []
-            
-            # Core content fields
-            title = self._get_field_value(entry, ['title', 'Title'])
-            description = self._get_field_value(entry, ['description', 'Description'])
-            filename = self._get_field_value(entry, ['file', 'File'])
-            
-            # Add title
-            if title:
-                cleaned_title = self._clean_text(title)
-                if cleaned_title:
-                    parts.append(cleaned_title)
-            
-            # Add description 
-            if description:
-                cleaned_desc = self._process_description(description)
-                if cleaned_desc:
-                    parts.append(cleaned_desc)
-            
-            # Extract semantic info from other fields
-            semantic_parts = self._extract_semantic_info(entry)
-            if semantic_parts:
-                parts.extend(semantic_parts)
-            
-            # Add filename context if needed
-            if len(' '.join(parts)) < 15:  # If still lacking content
-                if filename:
-                    cleaned_filename = self._process_filename(filename)
-                    if cleaned_filename:
-                        parts.append(cleaned_filename)
-            
-            # Combine and clean
-            sentence = ' '.join(parts)
-            sentence = self._normalize_sentence(sentence)
-            
-            # Limit length (embeddings work better with focused content)
-            words = sentence.split()
-            if len(words) > 20:
-                sentence = ' '.join(words[:20])
-            
-            logger.debug(f"Created enhanced embedding: '{sentence}' from entry {entry.get('ID', 'unknown')}")
-            return sentence
-            
-        except Exception as e:
-            logger.error(f"Failed to create enhanced embedding: {e}")
-            return self.create_embedding_sentence(entry)  # Fallback to basic
+        # Filter meaningful words
+        keywords = []
+        for word in words:
+            if len(word) > 2 and word not in all_stop_words:
+                keywords.append(word)
+        
+        return keywords[:max_words] if max_words else keywords
     
-    def _extract_semantic_info(self, entry: Dict[str, Any]) -> List[str]:
-        """Extract semantic information from metadata fields."""
-        semantic_parts = []
+    def _clean_text(self, text: str) -> str:
+        """Basic text cleaning."""
+        if not text:
+            return ""
         
-        # Look for type/genre information
-        type_info = self._get_field_value(entry, ['type', 'Type', 'genre', 'Genre', 'category', 'Category'])
-        if type_info and type_info.lower() not in ['sample', 'audio', 'sound']:
-            cleaned_type = self._clean_text(type_info)
-            if cleaned_type and len(cleaned_type) > 2:
-                semantic_parts.append(cleaned_type)
+        # Convert to lowercase
+        text = str(text).lower().strip()
         
-        # Look for instrument information
-        instrument = self._get_field_value(entry, ['instrument', 'Instrument', 'source', 'Source'])
-        if instrument:
-            cleaned_instrument = self._clean_text(instrument)
-            if cleaned_instrument and len(cleaned_instrument) > 2:
-                semantic_parts.append(cleaned_instrument)
+        # Remove special characters, keep alphanumeric and spaces
+        text = re.sub(r'[^\w\s]', ' ', text)
         
-        # Look for mood/style descriptors in various fields
-        mood_fields = ['mood', 'style', 'feeling', 'vibe', 'character', 'texture']
-        for field in mood_fields:
-            mood = self._get_field_value(entry, [field, field.capitalize()])
-            if mood:
-                cleaned_mood = self._clean_text(mood)
-                if cleaned_mood and len(cleaned_mood) > 2:
-                    semantic_parts.append(cleaned_mood)
+        # Normalize whitespace
+        text = re.sub(r'\s+', ' ', text)
         
-        # Look for tempo/energy descriptors
-        tempo = self._get_field_value(entry, ['tempo', 'Tempo', 'bpm', 'BPM', 'speed', 'Speed'])
-        if tempo:
-            tempo_desc = self._process_tempo_info(tempo)
-            if tempo_desc:
-                semantic_parts.append(tempo_desc)
-        
-        return semantic_parts[:3]  # Limit to top 3 semantic additions
+        return text.strip()
     
-    def _process_tempo_info(self, tempo_value: str) -> str:
-        """Convert tempo information to descriptive terms."""
-        tempo_str = str(tempo_value).lower().strip()
+    def enhance_query(self, query: str) -> str:
+        """Enhance user queries for better matching."""
+        if not query:
+            return ""
         
-        # If it's a number, convert to descriptive terms
-        try:
-            bpm = float(tempo_str)
-            if bpm < 60:
-                return "very slow"
-            elif bpm < 90:
-                return "slow"
-            elif bpm < 120:
-                return "moderate"
-            elif bpm < 140:
-                return "fast"
-            elif bpm < 180:
-                return "very fast"
-            else:
-                return "extremely fast"
-        except ValueError:
-            # If it's already descriptive text, clean it
-            cleaned = self._clean_text(tempo_str)
-            if cleaned in ['slow', 'fast', 'medium', 'moderate', 'quick', 'sluggish']:
-                return cleaned
-        
-        return ""
+        # Simple query enhancement - just clean it
+        keywords = self._extract_keywords(query, max_words=10)
+        return " ".join(keywords)
     
-    def generate_smart_embedding_text(self, entry: Dict[str, Any]) -> str:
-        """
-        Generate smart embedding text that adapts based on available data.
-        This is the most intelligent version that considers data quality.
-        """
-        try:
-            # Assess what data we have
-            title = self._get_field_value(entry, ['title', 'Title'])
-            description = self._get_field_value(entry, ['description', 'Description'])
-            filename = self._get_field_value(entry, ['file', 'File'])
-            
-            title_quality = len(title.split()) if title else 0
-            desc_quality = len(description.split()) if description else 0
-            
-            # Strategy 1: Rich description available
-            if desc_quality >= 3:
-                return self.create_enhanced_embedding_sentence(entry)
-            
-            # Strategy 2: Good title, poor description
-            elif title_quality >= 2:
-                parts = []
-                if title:
-                    parts.append(self._clean_text(title))
-                if description:
-                    parts.append(self._process_description(description))
-                
-                # Add semantic info to compensate for poor description
-                semantic_parts = self._extract_semantic_info(entry)
-                parts.extend(semantic_parts)
-                
-                sentence = ' '.join(parts)
-                return self._normalize_sentence(sentence)
-            
-            # Strategy 3: Poor title and description, rely on filename + metadata
-            else:
-                parts = []
-                if title:
-                    parts.append(self._clean_text(title))
-                if description:
-                    parts.append(self._process_description(description))
-                if filename:
-                    parts.append(self._process_filename(filename))
-                
-                # Add lots of semantic info
-                semantic_parts = self._extract_semantic_info(entry)
-                parts.extend(semantic_parts[:5])  # More semantic info
-                
-                sentence = ' '.join(parts)
-                return self._normalize_sentence(sentence)
-            
-        except Exception as e:
-            logger.error(f"Smart embedding generation failed: {e}")
-            return self.create_embedding_sentence(entry)  # Fallback
-    
-    def regenerate_embeddings_for_collection(self, db_manager, embedding_manager, 
-                                           strategy: str = "smart") -> Dict[str, int]:
-        """
-        Utility to regenerate embeddings for entire collection with better text.
+    # Legacy methods for backward compatibility
+    def create_embedding_sentence(self, entry: Dict[str, Any]) -> str:
+        """Legacy method - creates embedding from single entry."""
+        description = entry.get("description", "")
+        if description:
+            return self._clean_text(description)
         
-        Args:
-            db_manager: DatabaseManager instance
-            embedding_manager: EmbeddingManager instance  
-            strategy: "basic", "enhanced", or "smart"
+        # Try other fields
+        title = entry.get("title", "")
+        if title:
+            return self._clean_text(title)
         
-        Returns:
-            Stats dictionary with counts
-        """
-        logger.info(f"Regenerating embeddings with '{strategy}' strategy")
-        
-        stats = {
-            'processed': 0,
-            'updated': 0,
-            'skipped': 0,
-            'errors': 0
-        }
-        
-        try:
-            # Get all active entries
-            entries = list(db_manager.collection.find({"deleted": {"$ne": True}}))
-            
-            for entry in entries:
-                try:
-                    stats['processed'] += 1
-                    entry_id = entry.get('ID')
-                    
-                    # Generate new embedding text based on strategy
-                    if strategy == "enhanced":
-                        new_text = self.create_enhanced_embedding_sentence(entry)
-                    elif strategy == "smart":
-                        new_text = self.generate_smart_embedding_text(entry)
-                    else:  # basic
-                        new_text = self.create_embedding_sentence(entry)
-                    
-                    # Check if it's different from existing
-                    current_text = entry.get('embedding_text', '')
-                    if new_text == current_text:
-                        stats['skipped'] += 1
-                        continue
-                    
-                    # Create new embedding
-                    faiss_id, is_duplicate = embedding_manager.add_embedding(new_text)
-                    
-                    if faiss_id is not None and not is_duplicate:
-                        # Update database
-                        if db_manager.update_embedding_info(entry_id, faiss_id, new_text):
-                            stats['updated'] += 1
-                            logger.info(f"Updated embedding for ID {entry_id}")
-                        else:
-                            stats['errors'] += 1
-                    else:
-                        stats['skipped'] += 1
-                        
-                except Exception as e:
-                    stats['errors'] += 1
-                    logger.error(f"Failed to update embedding for entry {entry.get('ID', 'unknown')}: {e}")
-            
-            logger.info(f"Embedding regeneration complete: {stats}")
-            return stats
-            
-        except Exception as e:
-            logger.error(f"Embedding regeneration failed: {e}")
-            return stats
+        return "audio content"

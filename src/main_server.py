@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Incantation Server - Main Application (Updated)
-===============================================
+Hibikidō Server - Main Application
+==================================
 
-Music incantation server that maps text descriptions to sounds, effects, and behaviors.
-Completely schemaless except for core system fields.
+Music server that maps text descriptions to sounds and effects using semantic search.
+Supports hierarchical database with recordings, segments, effects, and performances.
 
 Usage:
     python main_server.py [--config config.json]
@@ -21,7 +21,7 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime
 
-from database_manager import DatabaseManager
+from database_manager import HibikidoDatabase
 from embedding_manager import EmbeddingManager
 from text_processor import TextProcessor
 from csv_importer import CSVImporter
@@ -34,15 +34,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class IncantationServer:
+class HibikidoServer:
     def __init__(self, config: Dict[str, Any] = None):
         self.config = config or self._default_config()
         
         # Initialize components
-        self.db_manager = DatabaseManager(
+        self.db_manager = HibikidoDatabase(
             uri=self.config['mongodb']['uri'],
-            db_name=self.config['mongodb']['database'],
-            collection_name=self.config['mongodb']['collection']
+            db_name=self.config['mongodb']['database']
         )
         
         self.embedding_manager = EmbeddingManager(
@@ -67,12 +66,11 @@ class IncantationServer:
         return {
             'mongodb': {
                 'uri': 'mongodb://localhost:27017',
-                'database': 'incantations',
-                'collection': 'entries'
+                'database': 'hibikido'
             },
             'embedding': {
                 'model_name': 'all-MiniLM-L6-v2',
-                'index_file': 'incantations.index'
+                'index_file': 'hibikido.index'
             },
             'osc': {
                 'listen_ip': '127.0.0.1',
@@ -88,7 +86,7 @@ class IncantationServer:
     
     def initialize(self) -> bool:
         """Initialize all components."""
-        logger.info("Initializing Incantation Server...")
+        logger.info("Initializing Hibikidō Server...")
         
         # Initialize database
         if not self.db_manager.connect():
@@ -115,13 +113,11 @@ class IncantationServer:
         """Register OSC message handlers."""
         handlers = {
             'search': self._handle_search,
-            'add': self._handle_add,
+            'add_segment': self._handle_add_segment,
+            'add_preset': self._handle_add_preset,
             'import_csv': self._handle_import_csv,
-            'get_by_id': self._handle_get_by_id,
-            'soft_delete': self._handle_soft_delete,
-            'update_embedding': self._handle_update_embedding,
+            'rebuild_index': self._handle_rebuild_index,
             'stats': self._handle_stats,
-            'list_types': self._handle_list_types,
             'stop': self._handle_stop
         }
         
@@ -130,7 +126,7 @@ class IncantationServer:
     def start(self):
         """Start the server."""
         try:
-            logger.info("Starting Incantation Server...")
+            logger.info("Starting Hibikidō Server...")
             
             # Setup graceful shutdown
             signal.signal(signal.SIGINT, self._shutdown_handler)
@@ -164,30 +160,29 @@ class IncantationServer:
         stats = self.db_manager.get_stats()
         
         print("\n" + "="*70)
-        print("🎵 INCANTATION SERVER READY 🎵")
+        print("🎵 HIBIKIDŌ SERVER READY 🎵")
         print("="*70)
-        print(f"Database: {stats.get('active', 0)} active entries, "
-              f"{stats.get('with_embeddings', 0)} with embeddings")
+        print(f"Database: {stats.get('segments', 0)} segments, "
+              f"{stats.get('presets', 0)} presets, "
+              f"{stats.get('total_searchable_items', 0)} searchable")
         print(f"FAISS Index: {self.embedding_manager.get_total_embeddings()} embeddings")
         print(f"Listening: {config['osc']['listen_ip']}:{config['osc']['listen_port']}")
         print(f"Sending: {config['osc']['send_ip']}:{config['osc']['send_port']}")
         print("\nOSC Commands:")
-        print("  /search \"incantation text\"     - find matching sounds/fx")
-        print("  /add \"text\" \"metadata_json\"  - add new entry")
+        print("  /search \"query text\"           - semantic search across segments and presets")
+        print("  /add_segment \"text\" metadata   - add new segment")
+        print("  /add_preset \"text\" metadata    - add new effect preset")
         print("  /import_csv \"filepath\"         - bulk import from CSV")
-        print("  /get_by_id id                  - get specific entry")
-        print("  /soft_delete id                - delete entry")
-        print("  /update_embedding id \"text\"   - update entry embedding")
-        print("  /stats                         - database statistics")
-        print("  /list_types                    - available entry types")
-        print("  /stop                          - shutdown server")
+        print("  /rebuild_index                  - rebuild FAISS index from database")
+        print("  /stats                          - database statistics")
+        print("  /stop                           - shutdown server")
         print("="*70)
         print()
     
     # OSC Message Handlers
     
     def _handle_search(self, unused_addr: str, *args):
-        """Handle search requests."""
+        """Handle search requests - returns full MongoDB documents."""
         try:
             parsed = self.osc_handler.parse_args(*args)
             query = parsed.get('arg1', '').strip()
@@ -198,105 +193,158 @@ class IncantationServer:
             
             logger.info(f"Search query: '{query}'")
             
-            # Enhance query for better matching
-            enhanced_query = self.text_processor.enhance_query(query)
-            
-            # Search embeddings
-            faiss_ids, scores = self.embedding_manager.search(
-                enhanced_query, 
-                self.config['search']['top_k']
+            # Search with MongoDB lookups
+            results = self.embedding_manager.search(
+                query, 
+                self.config['search']['top_k'],
+                db_manager=self.db_manager
             )
             
-            if not faiss_ids:
+            if not results:
                 self.osc_handler.send_confirm("no matches found")
                 return
             
-            # Get database entries
-            matches = []
-            for faiss_id, score in zip(faiss_ids, scores):
-                if score < self.config['search']['min_score']:
-                    continue
-                
-                entry = self.db_manager.get_by_faiss_id(faiss_id)
-                if entry:
-                    # Flexible field extraction
-                    match = {
-                        'id': entry.get('ID', faiss_id),
-                        'score': score
-                    }
-                    
-                    # Try different field names for common fields
-                    match['type'] = entry.get('type') or entry.get('Type', 'unknown')
-                    match['title'] = entry.get('title') or entry.get('Title', 'untitled')
-                    match['file'] = entry.get('file') or entry.get('File', '')
-                    match['description'] = entry.get('description') or entry.get('Description', '')
-                    match['duration'] = entry.get('duration') or entry.get('Duration', 0)
-                    
-                    matches.append(match)
-            
-            self.osc_handler.send_matches(matches)
-            logger.info(f"Found {len(matches)} matches for '{query}'")
+            # Send full documents via OSC
+            self._send_search_results(results)
+            logger.info(f"Search '{query}' returned {len(results)} results")
             
         except Exception as e:
             error_msg = f"search failed: {e}"
             logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
     
-    def _handle_add(self, unused_addr: str, *args):
-        """Handle add entry requests."""
+    def _send_search_results(self, results: List[Dict[str, Any]]):
+        """Send search results as full documents via OSC."""
+        try:
+            # Send each document as separate OSC message
+            for i, result in enumerate(results):
+                collection = result["collection"]
+                document = result["document"]
+                score = result["score"]
+                
+                # Send the full document
+                self.osc_handler.client.send_message("/result", [
+                    i,                           # Result index
+                    collection,                  # Collection name
+                    score,                       # Similarity score
+                    str(document)                # Full MongoDB document as string
+                ])
+            
+            # Send completion message
+            self.osc_handler.client.send_message("/search_complete", len(results))
+            
+        except Exception as e:
+            logger.error(f"Failed to send search results: {e}")
+            self.osc_handler.send_error(f"failed to send results: {e}")
+    
+    def _handle_add_segment(self, unused_addr: str, *args):
+        """Handle add segment requests."""
         try:
             parsed = self.osc_handler.parse_args(*args)
-            text = parsed.get('arg1', '').strip()
-            metadata = parsed.get('arg2', {})
+            embedding_text = parsed.get('arg1', '').strip()
+            metadata_str = parsed.get('arg2', '{}')
             
-            if not text:
-                self.osc_handler.send_error("add requires text")
+            if not embedding_text:
+                self.osc_handler.send_error("add_segment requires embedding text")
                 return
             
-            # Handle metadata as string or dict
-            if isinstance(metadata, str):
-                try:
-                    import json
-                    metadata = json.loads(metadata)
-                except:
-                    metadata = {}
-            
-            # Create entry with flexible fields
-            entry = {
-                'ID': self.db_manager.get_next_id(),
-                'description': text,  # Primary content for embedding
-                'created_at': datetime.now(),
-                'deleted': False
-            }
-            
-            # Add any metadata fields provided
-            entry.update(metadata)
-            
-            # Create embedding text using description + filename
-            entry['embedding_text'] = self.text_processor.create_embedding_sentence(entry)
-            
-            # Add embedding to FAISS
-            faiss_id, is_duplicate = self.embedding_manager.add_embedding(entry['embedding_text'])
-            
-            if is_duplicate:
-                self.osc_handler.send_confirm(f"duplicate detected: FAISS ID {faiss_id}")
+            # Parse metadata
+            try:
+                metadata = json.loads(metadata_str) if metadata_str != '{}' else {}
+            except json.JSONDecodeError:
+                self.osc_handler.send_error("invalid metadata JSON")
                 return
             
+            # Required fields with defaults
+            segment_id = metadata.get('segment_id', f"seg_{datetime.now().isoformat()}")
+            source_id = metadata.get('source_id', 'unknown')
+            segmentation_id = metadata.get('segmentation_id', 'manual')
+            start = float(metadata.get('start', 0.0))
+            end = float(metadata.get('end', 1.0))
+            description = metadata.get('description', embedding_text[:50])
+            
+            # Add embedding
+            faiss_id = self.embedding_manager.add_embedding(embedding_text)
             if faiss_id is None:
                 self.osc_handler.send_error("failed to create embedding")
                 return
             
             # Add to database
-            entry['faiss_id'] = faiss_id
-            if self.db_manager.add_entry(entry):
-                success_msg = f"added: {entry['ID']} - {text[:50]}"
-                self.osc_handler.send_confirm(success_msg)
-                logger.info(f"Added entry: {success_msg}")
+            success = self.db_manager.add_segment(
+                segment_id=segment_id,
+                source_id=source_id,
+                segmentation_id=segmentation_id,
+                start=start,
+                end=end,
+                description=description,
+                embedding_text=embedding_text,
+                faiss_index=faiss_id
+            )
+            
+            if success:
+                self.osc_handler.send_confirm(f"added segment: {segment_id}")
+                logger.info(f"Added segment: {segment_id}")
             else:
-                self.osc_handler.send_error("failed to add to database")
+                self.osc_handler.send_error("failed to add segment to database")
             
         except Exception as e:
-            error_msg = f"add failed: {e}"
+            error_msg = f"add_segment failed: {e}"
+            logger.error(error_msg)
+            self.osc_handler.send_error(error_msg)
+    
+    def _handle_add_preset(self, unused_addr: str, *args):
+        """Handle add preset requests."""
+        try:
+            parsed = self.osc_handler.parse_args(*args)
+            embedding_text = parsed.get('arg1', '').strip()
+            metadata_str = parsed.get('arg2', '{}')
+            
+            if not embedding_text:
+                self.osc_handler.send_error("add_preset requires embedding text")
+                return
+            
+            # Parse metadata
+            try:
+                metadata = json.loads(metadata_str) if metadata_str != '{}' else {}
+            except json.JSONDecodeError:
+                self.osc_handler.send_error("invalid metadata JSON")
+                return
+            
+            # Required fields
+            effect_id = metadata.get('effect_id')
+            if not effect_id:
+                self.osc_handler.send_error("effect_id required in metadata")
+                return
+            
+            parameters = metadata.get('parameters', [])
+            description = metadata.get('description', embedding_text[:50])
+            
+            # Create preset
+            preset = {
+                "parameters": parameters,
+                "description": description,
+                "embedding_text": embedding_text
+            }
+            
+            # Add embedding
+            faiss_id = self.embedding_manager.add_embedding(embedding_text)
+            if faiss_id is None:
+                self.osc_handler.send_error("failed to create embedding")
+                return
+            
+            preset["FAISS_index"] = faiss_id
+            
+            # Add to database
+            success = self.db_manager.add_preset_to_effect(effect_id, preset)
+            
+            if success:
+                self.osc_handler.send_confirm(f"added preset to effect: {effect_id}")
+                logger.info(f"Added preset to effect: {effect_id}")
+            else:
+                self.osc_handler.send_error("failed to add preset to database")
+            
+        except Exception as e:
+            error_msg = f"add_preset failed: {e}"
             logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
     
@@ -319,14 +367,10 @@ class IncantationServer:
                 self.osc_handler.send_error(error_msg)
                 return
             
-            # Import entries (will update existing ones)
+            # Import entries
             entries, errors = self.csv_importer.import_csv(filepath, self.db_manager, self.embedding_manager)
             
-            if not entries and not errors:
-                self.osc_handler.send_confirm("no changes made - all entries already exist")
-                return
-            
-            result_msg = f"import complete"
+            result_msg = f"import complete: {len(entries)} entries"
             if errors:
                 result_msg += f" ({len(errors)} errors - check logs)"
             
@@ -338,103 +382,26 @@ class IncantationServer:
             logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
     
-    def _handle_get_by_id(self, unused_addr: str, *args):
-        """Handle get by ID requests."""
+    def _handle_rebuild_index(self, unused_addr: str, *args):
+        """Handle rebuild index requests with hierarchical context."""
         try:
-            parsed = self.osc_handler.parse_args(*args)
+            logger.info("Rebuilding FAISS index from database with hierarchical context...")
             
-            try:
-                entry_id = int(parsed.get('arg1', 0))
-            except (ValueError, TypeError):
-                self.osc_handler.send_error("get_by_id requires numeric ID")
-                return
+            # Use text processor for hierarchical embedding text
+            stats = self.embedding_manager.rebuild_from_database(
+                self.db_manager, 
+                self.text_processor
+            )
             
-            entry = self.db_manager.get_by_id(entry_id)
+            result_msg = f"index rebuilt: {stats['segments_added']} segments, {stats['presets_added']} presets"
+            if stats['errors'] > 0:
+                result_msg += f" ({stats['errors']} errors)"
             
-            if entry:
-                # Flexible field extraction
-                match = [{
-                    'id': entry['ID'],
-                    'score': 1.0,  # Perfect match for direct lookup
-                    'type': entry.get('type') or entry.get('Type', 'unknown'),
-                    'title': entry.get('title') or entry.get('Title', 'untitled'),
-                    'file': entry.get('file') or entry.get('File', ''),
-                    'description': entry.get('description') or entry.get('Description', ''),
-                    'duration': entry.get('duration') or entry.get('Duration', 0)
-                }]
-                self.osc_handler.send_matches(match)
-            else:
-                self.osc_handler.send_confirm(f"not found: ID {entry_id}")
+            self.osc_handler.send_confirm(result_msg)
+            logger.info(f"Index rebuild completed: {result_msg}")
             
         except Exception as e:
-            error_msg = f"get_by_id failed: {e}"
-            logger.error(error_msg)
-            self.osc_handler.send_error(error_msg)
-    
-    def _handle_soft_delete(self, unused_addr: str, *args):
-        """Handle soft delete requests."""
-        try:
-            parsed = self.osc_handler.parse_args(*args)
-            
-            try:
-                entry_id = int(parsed.get('arg1', 0))
-            except (ValueError, TypeError):
-                self.osc_handler.send_error("soft_delete requires numeric ID")
-                return
-            
-            if self.db_manager.soft_delete(entry_id):
-                self.osc_handler.send_confirm(f"deleted: ID {entry_id}")
-            else:
-                self.osc_handler.send_confirm(f"not found: ID {entry_id}")
-            
-        except Exception as e:
-            error_msg = f"soft_delete failed: {e}"
-            logger.error(error_msg)
-            self.osc_handler.send_error(error_msg)
-    
-    def _handle_update_embedding(self, unused_addr: str, *args):
-        """Handle update embedding requests."""
-        try:
-            parsed = self.osc_handler.parse_args(*args)
-            
-            try:
-                entry_id = int(parsed.get('arg1', 0))
-            except (ValueError, TypeError):
-                self.osc_handler.send_error("update_embedding requires numeric ID")
-                return
-            
-            new_text = parsed.get('arg2', '').strip()
-            if not new_text:
-                self.osc_handler.send_error("update_embedding requires new text")
-                return
-            
-            # Check if entry exists
-            entry = self.db_manager.get_by_id(entry_id)
-            if not entry:
-                self.osc_handler.send_confirm(f"not found: ID {entry_id}")
-                return
-            
-            # Create new embedding
-            faiss_id, is_duplicate = self.embedding_manager.add_embedding(new_text)
-            
-            if faiss_id is None:
-                self.osc_handler.send_error("failed to create new embedding")
-                return
-            
-            if is_duplicate:
-                self.osc_handler.send_confirm(f"duplicate embedding: FAISS ID {faiss_id}")
-                return
-            
-            # Update database
-            if self.db_manager.update_embedding_info(entry_id, faiss_id, new_text):
-                success_msg = f"updated: ID {entry_id} -> FAISS {faiss_id}"
-                self.osc_handler.send_confirm(success_msg)
-                logger.info(f"Updated embedding: {success_msg}")
-            else:
-                self.osc_handler.send_error("failed to update database")
-            
-        except Exception as e:
-            error_msg = f"update_embedding failed: {e}"
+            error_msg = f"rebuild_index failed: {e}"
             logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
     
@@ -442,31 +409,30 @@ class IncantationServer:
         """Handle stats requests."""
         try:
             stats = self.db_manager.get_stats()
-            self.osc_handler.send_stats(stats)
+            embedding_count = self.embedding_manager.get_total_embeddings()
             
-            # Log detailed stats
-            logger.info(f"Stats - Total: {stats.get('total', 0)}, "
-                       f"Active: {stats.get('active', 0)}, "
-                       f"With embeddings: {stats.get('with_embeddings', 0)}")
+            # Send detailed stats
+            stats_msg = (f"Database: {stats.get('recordings', 0)} recordings, "
+                        f"{stats.get('segments', 0)} segments, "
+                        f"{stats.get('effects', 0)} effects, "
+                        f"{stats.get('presets', 0)} presets. "
+                        f"FAISS: {embedding_count} embeddings")
             
-            type_breakdown = stats.get('type_breakdown', {})
-            for entry_type, count in type_breakdown.items():
-                logger.info(f"  {entry_type}: {count}")
+            self.osc_handler.send_confirm(stats_msg)
+            
+            # Also send as structured data
+            self.osc_handler.client.send_message("/stats_result", [
+                stats.get("recordings", 0),
+                stats.get("segments", 0),
+                stats.get("effects", 0),
+                stats.get("presets", 0),
+                embedding_count
+            ])
+            
+            logger.info(f"Stats: {stats_msg}")
             
         except Exception as e:
             error_msg = f"stats failed: {e}"
-            logger.error(error_msg)
-            self.osc_handler.send_error(error_msg)
-    
-    def _handle_list_types(self, unused_addr: str, *args):
-        """Handle list types requests."""
-        try:
-            types = self.db_manager.get_types()
-            self.osc_handler.send_types(types)
-            logger.info(f"Available types: {types}")
-            
-        except Exception as e:
-            error_msg = f"list_types failed: {e}"
             logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
     
@@ -486,7 +452,7 @@ class IncantationServer:
         if not self.is_running:
             return
         
-        logger.info("Shutting down Incantation Server...")
+        logger.info("Shutting down Hibikidō Server...")
         self.is_running = False
         
         try:
@@ -511,7 +477,7 @@ def load_config(config_file: str) -> Dict[str, Any]:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description='Incantation Server')
+    parser = argparse.ArgumentParser(description='Hibikidō Server')
     parser.add_argument('--config', help='Configuration file path')
     parser.add_argument('--log-level', default='INFO', 
                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
@@ -528,7 +494,7 @@ def main():
         config = load_config(args.config)
     
     # Create and start server
-    server = IncantationServer(config)
+    server = HibikidoServer(config)
     
     if not server.initialize():
         logger.error("Failed to initialize server")
