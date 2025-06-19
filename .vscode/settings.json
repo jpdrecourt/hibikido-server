@@ -9,5 +9,10 @@
     "deque-systems.vscode-axe-linter": "explicit"
   },
   "editor.formatOnSave": true,
-  "editor.formatOnType": false
+  "editor.formatOnType": false,
+
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["tests"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.autoTestDiscoverOnSaveEnabled": true
 }

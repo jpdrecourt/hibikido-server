@@ -7,9 +7,9 @@ Test the updated text processor with hierarchical context.
 
 import tempfile
 import shutil
-from database_manager import HibikidoDatabase
-from embedding_manager import EmbeddingManager
-from text_processor import TextProcessor
+from hibikido.database_manager import HibikidoDatabase
+from hibikido.embedding_manager import EmbeddingManager
+from hibikido.text_processor import TextProcessor
 
 def test_hierarchical_text_processing():
     """Test hierarchical text processing for segments and presets."""

@@ -21,11 +21,11 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime
 
-from database_manager import HibikidoDatabase
-from embedding_manager import EmbeddingManager
-from text_processor import TextProcessor
-from csv_importer import CSVImporter
-from osc_handler import OSCHandler
+from .database_manager import HibikidoDatabase
+from .embedding_manager import EmbeddingManager
+from .text_processor import TextProcessor
+from .csv_importer import CSVImporter
+from .osc_handler import OSCHandler
 
 # Configure logging
 logging.basicConfig(

@@ -16,6 +16,42 @@
 		"subpatcher_template" : "Default with Grid",
 		"boxes" : [ 			{
 				"box" : 				{
+					"id" : "obj-34",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 0,
+					"patching_rect" : [ 665.0, 884.0, 32.0, 22.0 ],
+					"text" : "print"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-33",
+					"maxclass" : "message",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 512.0, 785.0, 32.0, 22.0 ],
+					"text" : "path"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-29",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 2,
+					"outlettype" : [ "", "" ],
+					"patching_rect" : [ 512.0, 818.0, 67.0, 22.0 ],
+					"save" : [ "#N", "thispatcher", ";", "#Q", "end", ";" ],
+					"text" : "thispatcher"
+				}
+
+			}
+, 			{
+				"box" : 				{
 					"id" : "obj-25",
 					"maxclass" : "newobj",
 					"numinlets" : 1,
@@ -98,8 +134,8 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 368.0, 604.0, 231.0, 36.0 ],
-					"text" : ";\r\nmax launchbrowser incantation-server.bat"
+					"patching_rect" : [ 368.0, 604.0, 204.0, 36.0 ],
+					"text" : ";\r\nmax launchbrowser start-hibikido.bat"
 				}
 
 			}
@@ -448,6 +484,20 @@
 			}
 , 			{
 				"patchline" : 				{
+					"destination" : [ "obj-34", 0 ],
+					"source" : [ "obj-29", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-29", 0 ],
+					"source" : [ "obj-33", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
 					"destination" : [ "obj-9", 0 ],
 					"midpoints" : [ 103.0, 178.0, 46.0, 178.0 ],
 					"source" : [ "obj-4", 1 ]
@@ -515,7 +565,7 @@
 			}
  ],
 		"dependency_cache" : [ 			{
-				"name" : "u552000428.js",
+				"name" : "u306000281.js",
 				"bootpath" : "~/AppData/Roaming/Cycling '74/Max 9/Settings/temp64-Max",
 				"patcherrelativepath" : "../../../../../AppData/Roaming/Cycling '74/Max 9/Settings/temp64-Max",
 				"type" : "TEXT",

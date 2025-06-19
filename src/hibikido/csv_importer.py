@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Tuple
 import logging
 
-from text_processor import TextProcessor
+from .text_processor import TextProcessor
 
 logger = logging.getLogger(__name__)
 

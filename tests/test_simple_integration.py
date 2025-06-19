@@ -7,8 +7,8 @@ Test the simplified search system: OSC -> FAISS -> MongoDB -> OSC
 
 import tempfile
 import shutil
-from database_manager import HibikidoDatabase
-from embedding_manager import EmbeddingManager
+from hibikido.database_manager import HibikidoDatabase
+from hibikido.embedding_manager import EmbeddingManager
 
 def test_simple_search_flow():
     """Test the complete simple search flow."""

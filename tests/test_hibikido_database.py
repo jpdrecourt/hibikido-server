@@ -13,7 +13,7 @@ from typing import Dict, Any, List
 import uuid
 
 # Assuming the new database manager is in database_manager_v2.py
-from database_manager import HibikidoDatabase
+from hibikido.database_manager import HibikidoDatabase
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
