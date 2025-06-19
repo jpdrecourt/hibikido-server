@@ -1,10 +1,10 @@
 # Hibikidō (響き道)
 
-_Still air awaits. Quivering breath. A sound, not yet._
+_Still air awaits. Quivering breath. A sound, not yet. We begin..._
 
 Hibikidō (響き道) - the way of resonance - is not a search engine. It is a recognition system. Sounds exist in latency, waiting in the digital wind. We do not create them; we help them remember their names.
 
-Cast incantations in natural language. Receive coordinates to the sounds that were always there.
+Cast incantations in natural language. Let sonic events incarnate.
 
 ## For Sound Artists
 
@@ -35,7 +35,7 @@ Send to the server (default: `127.0.0.1:9000`):
 
 ```
 /search "your incantation here"
-→ Returns: /result [index, collection, score, document_data...]
+→ Returns: Multiple /result messages followed by /search_complete
 
 /add_recording "sounds/wind/forest_01.wav" '{"description":"morning wind through oak trees"}'
 → Add new recording and auto-create full-length segment (0.0-1.0)
@@ -65,20 +65,23 @@ The server responds on `127.0.0.1:9001`:
 
 **Search Results** (`/result`):
 
-- `index`: Result position
+Each result is sent as a separate message with 8 fields:
+
+- `index`: Result position (0, 1, 2...)
 - `collection`: "segments" or "presets"
 - `score`: Similarity (0.0-1.0, higher = stronger resonance)
 - `path`: File path for the audio/effect
 - `description`: Human-readable description from embedding text
 - `start`: Start position (0.0-1.0, normalized, 0.0 for presets)
 - `end`: End position (0.0-1.0, normalized, 0.0 for presets)
-- `parameters`: Effect parameters (presets only, empty array for segments)
+- `parameters`: Effect parameters as JSON string (presets only, "[]" for segments)
 
 **Status Messages**:
 
 - `/confirm "message"` - Acknowledgments
 - `/error "message"` - When incantations fail
-- `/search_complete count` - End of results
+- `/search_complete count` - End of search results
+- `/stats_result [recordings, segments, effects, presets, embeddings]` - Database statistics
 
 ### The Database of Latent Sounds
 
@@ -389,7 +392,7 @@ def _handle_custom_command(self, unused_addr: str, *args):
 #### Dependencies
 
 ```bash
-pip install sentence-transformers python-osc faiss-cpu torch pymongo pandas
+pip install sentence-transformers python-osc faiss-cpu torch pymongo
 
 # Optional enhanced text processing:
 pip install spacy

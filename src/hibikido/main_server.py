@@ -10,7 +10,7 @@ Usage:
     python main_server.py [--config config.json]
 
 Dependencies:
-    pip install sentence-transformers python-osc faiss-cpu torch pymongo pandas
+    pip install sentence-transformers python-osc faiss-cpu torch pymongo
 """
 
 import signal
@@ -24,7 +24,6 @@ from datetime import datetime
 from .database_manager import HibikidoDatabase
 from .embedding_manager import EmbeddingManager
 from .text_processor import TextProcessor
-from .csv_importer import CSVImporter
 from .osc_handler import OSCHandler
 
 # Configure logging
@@ -50,7 +49,6 @@ class HibikidoServer:
         )
         
         self.text_processor = TextProcessor()
-        self.csv_importer = CSVImporter(self.text_processor)
         
         self.osc_handler = OSCHandler(
             listen_ip=self.config['osc']['listen_ip'],
@@ -90,23 +88,23 @@ class HibikidoServer:
         
         # Initialize database
         if not self.db_manager.connect():
-            logger.error("Failed to connect to database")
+            logger.error("Hibikidō Server: Failed to connect to database")
             return False
         
         # Initialize embedding system
         if not self.embedding_manager.initialize():
-            logger.error("Failed to initialize embedding system")
+            logger.error("Hibikidō Server: Failed to initialize embedding system")
             return False
         
         # Initialize OSC
         if not self.osc_handler.initialize():
-            logger.error("Failed to initialize OSC")
+            logger.error("Hibikidō Server: Failed to initialize OSC")
             return False
         
         # Register OSC handlers
         self._register_osc_handlers()
         
-        logger.info("All components initialized successfully")
+        logger.info("Hibikidō Server: All components initialized successfully")
         return True
     
     def _register_osc_handlers(self):
@@ -136,7 +134,7 @@ class HibikidoServer:
             # Start OSC server
             server = self.osc_handler.start_server()
             if not server:
-                logger.error("Failed to start OSC server")
+                logger.error("Hibikidō Server: Failed to start OSC server")
                 return
             
             self.is_running = True
@@ -148,11 +146,11 @@ class HibikidoServer:
             self._print_banner()
             
             # Start serving
-            logger.info("Server ready - waiting for OSC messages...")
+            logger.info("Hibikidō Server: Ready - waiting for OSC messages...")
             server.serve_forever()
             
         except Exception as e:
-            logger.error(f"Server error: {e}")
+            logger.error(f"Hibikidō Server error: {e}")
             self.shutdown()
     
     def _print_banner(self):
@@ -171,12 +169,13 @@ class HibikidoServer:
         print(f"Sending: {config['osc']['send_ip']}:{config['osc']['send_port']}")
         print("\nOSC Commands:")
         print("  /search \"query text\"           - semantic search across segments and presets")
-        print("  /add_segment \"text\" metadata   - add new segment")
-        print("  /add_preset \"text\" metadata    - add new effect preset")
-        print("  /import_csv \"filepath\"         - bulk import from CSV")
-        print("  /rebuild_index                  - rebuild FAISS index from database")
-        print("  /stats                          - database statistics")
-        print("  /stop                           - shutdown server")
+        print("  /add_recording \"path\" metadata  - add new recording with auto-segment")
+        print("  /add_effect \"path\" metadata     - add new effect with default preset")
+        print("  /add_segment \"text\" metadata    - add new segment")
+        print("  /add_preset \"text\" metadata     - add new effect preset")
+        print("  /rebuild_index                   - rebuild FAISS index from database")
+        print("  /stats                           - database statistics")
+        print("  /stop                            - shutdown server")
         print("="*70)
         print()
     
@@ -192,7 +191,7 @@ class HibikidoServer:
                 self.osc_handler.send_error("search requires query text")
                 return
             
-            logger.info(f"Search query: '{query}'")
+            logger.info(f"Hibikidō Server: Search query: '{query}'")
             
             # Search with MongoDB lookups
             results = self.embedding_manager.search(
@@ -207,11 +206,11 @@ class HibikidoServer:
             
             # Send full documents via OSC
             self._send_search_results(results)
-            logger.info(f"Search '{query}' returned {len(results)} results")
+            logger.info(f"Hibikidō Server: Search '{query}' returned {len(results)} results")
             
         except Exception as e:
             error_msg = f"search failed: {e}"
-            logger.error(error_msg)
+            logger.error(f"Hibikidō Server: {error_msg}")
             self.osc_handler.send_error(error_msg)
     
     def _send_search_results(self, results: List[Dict[str, Any]]):
@@ -255,7 +254,7 @@ class HibikidoServer:
             self.osc_handler.client.send_message("/search_complete", len(results))
             
         except Exception as e:
-            logger.error(f"Failed to send search results: {e}")
+            logger.error(f"Hibikidō Server: Failed to send search results: {e}")
             self.osc_handler.send_error(f"failed to send results: {e}")
     
     def _handle_add_recording(self, unused_addr: str, *args):
@@ -301,7 +300,7 @@ class HibikidoServer:
             # Add embedding
             faiss_id = self.embedding_manager.add_embedding(segment_embedding_text)
             if faiss_id is None:
-                logger.warning(f"Failed to create embedding for auto-segment")
+                logger.warning(f"Hibikidō Server: Failed to create embedding for auto-segment")
             
             # Add auto-segment (references recording by path)
             segment_success = self.db_manager.add_segment(
@@ -316,14 +315,14 @@ class HibikidoServer:
             
             if segment_success:
                 self.osc_handler.send_confirm(f"added recording: {path} with auto-segment")
-                logger.info(f"Added recording: {path} with auto-segment at FAISS {faiss_id}")
+                logger.info(f"Hibikidō Server: Added recording: {path} with auto-segment at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_confirm(f"added recording: {path} (segment creation failed)")
-                logger.warning(f"Recording added but auto-segment failed: {path}")
+                logger.warning(f"Hibikidō Server: Recording added but auto-segment failed: {path}")
             
         except Exception as e:
             error_msg = f"add_recording failed: {e}"
-            logger.error(error_msg)
+            logger.error(f"Hibikidō Server: {error_msg}")
             self.osc_handler.send_error(error_msg)
 
     def _handle_add_effect(self, unused_addr: str, *args):
@@ -369,7 +368,7 @@ class HibikidoServer:
             # Add embedding for default preset
             faiss_id = self.embedding_manager.add_embedding(preset_embedding_text)
             if faiss_id is None:
-                logger.warning(f"Failed to create embedding for default preset")
+                logger.warning(f"Hibikidō Server: Failed to create embedding for default preset")
             
             # Add default preset (separate collection, references effect by path)
             preset_success = self.db_manager.add_preset(
@@ -382,14 +381,14 @@ class HibikidoServer:
             
             if preset_success:
                 self.osc_handler.send_confirm(f"added effect: {path} with default preset")
-                logger.info(f"Added effect: {path} with default preset at FAISS {faiss_id}")
+                logger.info(f"Hibikidō Server: Added effect: {path} with default preset at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_confirm(f"added effect: {path} (preset creation failed)")
-                logger.warning(f"Effect added but default preset failed: {path}")
+                logger.warning(f"Hibikidō Server: Effect added but default preset failed: {path}")
             
         except Exception as e:
             error_msg = f"add_effect failed: {e}"
-            logger.error(error_msg)
+            logger.error(f"Hibikidō Server: {error_msg}")
             self.osc_handler.send_error(error_msg)
 
     def _handle_add_segment(self, unused_addr: str, *args):
@@ -465,13 +464,13 @@ class HibikidoServer:
             
             if success:
                 self.osc_handler.send_confirm(f"added segment for {source_path} [{start}-{end}]")
-                logger.info(f"Added segment for {source_path} at FAISS {faiss_id}")
+                logger.info(f"Hibikidō Server: Added segment for {source_path} at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_error("failed to add segment to database")
             
         except Exception as e:
             error_msg = f"add_segment failed: {e}"
-            logger.error(error_msg)
+            logger.error(f"Hibikidō Server: {error_msg}")
             self.osc_handler.send_error(error_msg)
 
     def _handle_add_preset(self, unused_addr: str, *args):
@@ -529,53 +528,19 @@ class HibikidoServer:
             
             if success:
                 self.osc_handler.send_confirm(f"added preset for {effect_path}")
-                logger.info(f"Added preset for {effect_path} at FAISS {faiss_id}")
+                logger.info(f"Hibikidō Server: Added preset for {effect_path} at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_error("failed to add preset to database")
             
         except Exception as e:
             error_msg = f"add_preset failed: {e}"
-            logger.error(error_msg)
-            self.osc_handler.send_error(error_msg)
-    
-    def _handle_import_csv(self, unused_addr: str, *args):
-        """Handle CSV import requests."""
-        try:
-            parsed = self.osc_handler.parse_args(*args)
-            filepath = parsed.get('arg1', '').strip()
-            
-            if not filepath:
-                self.osc_handler.send_error("import_csv requires filepath")
-                return
-            
-            logger.info(f"Starting CSV import: {filepath}")
-            
-            # Validate CSV first
-            is_valid, issues = self.csv_importer.validate_csv_structure(filepath)
-            if not is_valid:
-                error_msg = f"CSV validation failed: {'; '.join(issues)}"
-                self.osc_handler.send_error(error_msg)
-                return
-            
-            # Import entries
-            entries, errors = self.csv_importer.import_csv(filepath, self.db_manager, self.embedding_manager)
-            
-            result_msg = f"import complete: {len(entries)} entries"
-            if errors:
-                result_msg += f" ({len(errors)} errors - check logs)"
-            
-            self.osc_handler.send_confirm(result_msg)
-            logger.info(f"CSV import completed: {result_msg}")
-            
-        except Exception as e:
-            error_msg = f"import_csv failed: {e}"
-            logger.error(error_msg)
+            logger.error(f"Hibikidō Server: {error_msg}")
             self.osc_handler.send_error(error_msg)
     
     def _handle_rebuild_index(self, unused_addr: str, *args):
         """Handle rebuild index requests with hierarchical context."""
         try:
-            logger.info("Rebuilding FAISS index from database with hierarchical context...")
+            logger.info("Hibikidō Server: Rebuilding FAISS index from database with hierarchical context...")
             
             # Use text processor for hierarchical embedding text
             stats = self.embedding_manager.rebuild_from_database(
@@ -588,11 +553,11 @@ class HibikidoServer:
                 result_msg += f" ({stats['errors']} errors)"
             
             self.osc_handler.send_confirm(result_msg)
-            logger.info(f"Index rebuild completed: {result_msg}")
+            logger.info(f"Hibikidō Server: Index rebuild completed: {result_msg}")
             
         except Exception as e:
             error_msg = f"rebuild_index failed: {e}"
-            logger.error(error_msg)
+            logger.error(f"Hibikidō Server: {error_msg}")
             self.osc_handler.send_error(error_msg)
     
     def _handle_stats(self, unused_addr: str, *args):
@@ -619,11 +584,11 @@ class HibikidoServer:
                 embedding_count
             ])
             
-            logger.info(f"Stats: {stats_msg}")
+            logger.info(f"Hibikidō Server: Stats: {stats_msg}")
             
         except Exception as e:
             error_msg = f"stats failed: {e}"
-            logger.error(error_msg)
+            logger.error(f"Hibikidō Server: {error_msg}")
             self.osc_handler.send_error(error_msg)
             
     def _create_display_description(self, embedding_text: str) -> str:
@@ -680,18 +645,18 @@ class HibikidoServer:
             return embedding_text[:40].strip() or "untitled"
             
         except Exception as e:
-            logger.warning(f"Failed to create display description: {e}")
+            logger.warning(f"Hibikidō Server: Failed to create display description: {e}")
             return "untitled"
     
     def _handle_stop(self, unused_addr: str, *args):
         """Handle stop requests."""
-        logger.info("Received stop command")
+        logger.info("Hibikidō Server: Received stop command")
         self.osc_handler.send_confirm("stopping")
         self.shutdown()
     
     def _shutdown_handler(self, signum, frame):
         """Handle shutdown signals."""
-        logger.info(f"Received signal {signum}, shutting down...")
+        logger.info(f"Hibikidō Server: Received signal {signum}, shutting down...")
         self.shutdown()
     
     def shutdown(self):
@@ -705,9 +670,9 @@ class HibikidoServer:
         try:
             self.osc_handler.close()
             self.db_manager.close()
-            logger.info("Shutdown complete")
+            logger.info("Hibikidō Server: Shutdown complete")
         except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+            logger.error(f"Hibikidō Server: Error during shutdown: {e}")
         
         sys.exit(0)
 
@@ -718,7 +683,7 @@ def load_config(config_file: str) -> Dict[str, Any]:
         with open(config_file, 'r') as f:
             return json.load(f)
     except Exception as e:
-        logger.error(f"Failed to load config file {config_file}: {e}")
+        logger.error(f"Hibikidō Server: Failed to load config file {config_file}: {e}")
         return {}
 
 
@@ -744,16 +709,16 @@ def main():
     server = HibikidoServer(config)
     
     if not server.initialize():
-        logger.error("Failed to initialize server")
+        logger.error("Hibikidō Server: Failed to initialize server")
         sys.exit(1)
     
     try:
         server.start()
     except KeyboardInterrupt:
-        logger.info("Interrupted by user")
+        logger.info("Hibikidō Server: Interrupted by user")
         server.shutdown()
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Hibikidō Server: Unexpected error: {e}")
         server.shutdown()
         sys.exit(1)
 
