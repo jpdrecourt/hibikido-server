@@ -113,9 +113,10 @@ class HibikidoServer:
         """Register OSC message handlers."""
         handlers = {
             'search': self._handle_search,
+            'add_recording': self._handle_add_recording,
+            'add_effect': self._handle_add_effect,
             'add_segment': self._handle_add_segment,
             'add_preset': self._handle_add_preset,
-            'import_csv': self._handle_import_csv,
             'rebuild_index': self._handle_rebuild_index,
             'stats': self._handle_stats,
             'stop': self._handle_stop
@@ -214,20 +215,40 @@ class HibikidoServer:
             self.osc_handler.send_error(error_msg)
     
     def _send_search_results(self, results: List[Dict[str, Any]]):
-        """Send search results as full documents via OSC."""
+        """Send search results as simplified, uniform data via OSC."""
         try:
-            # Send each document as separate OSC message
+            # Send each result as separate OSC message with uniform format
             for i, result in enumerate(results):
                 collection = result["collection"]
                 document = result["document"]
                 score = result["score"]
                 
-                # Send the full document
+                # Extract common fields
+                if collection == "segments":
+                    path = document.get("source_path", "")
+                    start = document.get("start", 0.0)
+                    end = document.get("end", 1.0)
+                    parameters = []  # Empty for segments
+                else:  # presets
+                    path = document.get("effect_path", "")
+                    start = 0.0  # Default for presets
+                    end = 0.0    # Default for presets  
+                    parameters = document.get("parameters", [])
+                
+                # Create description from embedding text using reverse processing
+                embedding_text = document.get("embedding_text", "")
+                description = self._create_display_description(embedding_text)
+                
+                # Send uniform result format
                 self.osc_handler.client.send_message("/result", [
-                    i,                           # Result index
-                    collection,                  # Collection name
-                    score,                       # Similarity score
-                    str(document)                # Full MongoDB document as string
+                    i,                    # Result index
+                    collection,           # "segments" or "presets"
+                    float(score),         # Similarity score
+                    str(path),           # File path
+                    str(description),    # Human-readable description
+                    float(start),        # Start time (0.0 for presets)
+                    float(end),          # End time (0.0 for presets)
+                    str(json.dumps(parameters))  # Parameters as JSON string ([] for segments)
                 ])
             
             # Send completion message
@@ -237,15 +258,15 @@ class HibikidoServer:
             logger.error(f"Failed to send search results: {e}")
             self.osc_handler.send_error(f"failed to send results: {e}")
     
-    def _handle_add_segment(self, unused_addr: str, *args):
-        """Handle add segment requests."""
+    def _handle_add_recording(self, unused_addr: str, *args):
+        """Handle add recording requests - creates recording + auto-segment."""
         try:
             parsed = self.osc_handler.parse_args(*args)
-            embedding_text = parsed.get('arg1', '').strip()
+            path = parsed.get('arg1', '').strip()
             metadata_str = parsed.get('arg2', '{}')
             
-            if not embedding_text:
-                self.osc_handler.send_error("add_segment requires embedding text")
+            if not path:
+                self.osc_handler.send_error("add_recording requires audio file path")
                 return
             
             # Parse metadata
@@ -255,52 +276,131 @@ class HibikidoServer:
                 self.osc_handler.send_error("invalid metadata JSON")
                 return
             
-            # Required fields with defaults
-            segment_id = metadata.get('segment_id', f"seg_{datetime.now().isoformat()}")
-            source_id = metadata.get('source_id', 'unknown')
-            segmentation_id = metadata.get('segmentation_id', 'manual')
-            start = float(metadata.get('start', 0.0))
-            end = float(metadata.get('end', 1.0))
-            description = metadata.get('description', embedding_text[:50])
+            description = metadata.get('description', f"Recording: {path}")
             
-            # Add embedding
-            faiss_id = self.embedding_manager.add_embedding(embedding_text)
-            if faiss_id is None:
-                self.osc_handler.send_error("failed to create embedding")
+            # Add recording to database (path-based, rejects duplicates)
+            success = self.db_manager.add_recording(
+                path=path,
+                description=description
+            )
+            
+            if not success:
+                self.osc_handler.send_error(f"recording already exists or failed to add: {path}")
                 return
             
-            # Add to database
-            success = self.db_manager.add_segment(
-                segment_id=segment_id,
-                source_id=source_id,
-                segmentation_id=segmentation_id,
-                start=start,
-                end=end,
-                description=description,
-                embedding_text=embedding_text,
+            # Auto-create full-length segment
+            segment_description = f"Full recording: {description}"
+            
+            # Create embedding for segment with hierarchical context
+            segment_embedding_text = self.text_processor.create_segment_embedding_text(
+                segment={'description': segment_description},
+                recording={'description': description, 'path': path},
+                segmentation={'description': 'Auto-generated full recording segment'}
+            )
+            
+            # Add embedding
+            faiss_id = self.embedding_manager.add_embedding(segment_embedding_text)
+            if faiss_id is None:
+                logger.warning(f"Failed to create embedding for auto-segment")
+            
+            # Add auto-segment (references recording by path)
+            segment_success = self.db_manager.add_segment(
+                source_path=path,
+                segmentation_id="auto_full",
+                start=0.0,
+                end=1.0,
+                description=segment_description,
+                embedding_text=segment_embedding_text,
                 faiss_index=faiss_id
             )
             
-            if success:
-                self.osc_handler.send_confirm(f"added segment: {segment_id}")
-                logger.info(f"Added segment: {segment_id}")
+            if segment_success:
+                self.osc_handler.send_confirm(f"added recording: {path} with auto-segment")
+                logger.info(f"Added recording: {path} with auto-segment at FAISS {faiss_id}")
             else:
-                self.osc_handler.send_error("failed to add segment to database")
+                self.osc_handler.send_confirm(f"added recording: {path} (segment creation failed)")
+                logger.warning(f"Recording added but auto-segment failed: {path}")
             
         except Exception as e:
-            error_msg = f"add_segment failed: {e}"
+            error_msg = f"add_recording failed: {e}"
             logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
-    
-    def _handle_add_preset(self, unused_addr: str, *args):
-        """Handle add preset requests."""
+
+    def _handle_add_effect(self, unused_addr: str, *args):
+        """Handle add effect requests - creates effect + default preset."""
         try:
             parsed = self.osc_handler.parse_args(*args)
-            embedding_text = parsed.get('arg1', '').strip()
+            path = parsed.get('arg1', '').strip()
             metadata_str = parsed.get('arg2', '{}')
             
-            if not embedding_text:
-                self.osc_handler.send_error("add_preset requires embedding text")
+            if not path:
+                self.osc_handler.send_error("add_effect requires effect path")
+                return
+            
+            # Parse metadata
+            try:
+                metadata = json.loads(metadata_str) if metadata_str != '{}' else {}
+            except json.JSONDecodeError:
+                self.osc_handler.send_error("invalid metadata JSON")
+                return
+            
+            # Extract name from path if not provided
+            name = metadata.get('name', path.split('/')[-1].split('.')[0])
+            description = metadata.get('description', f"Effect: {name}")
+            
+            # Add effect to database (path-based, rejects duplicates)
+            success = self.db_manager.add_effect(
+                path=path,
+                name=name,
+                description=description
+            )
+            
+            if not success:
+                self.osc_handler.send_error(f"effect already exists or failed to add: {path}")
+                return
+            
+            # Create default preset
+            preset_description = f"Default preset: {description}"
+            preset_embedding_text = self.text_processor.create_preset_embedding_text(
+                preset={'description': preset_description},
+                effect={'description': description, 'name': name, 'path': path}
+            )
+            
+            # Add embedding for default preset
+            faiss_id = self.embedding_manager.add_embedding(preset_embedding_text)
+            if faiss_id is None:
+                logger.warning(f"Failed to create embedding for default preset")
+            
+            # Add default preset (separate collection, references effect by path)
+            preset_success = self.db_manager.add_preset(
+                effect_path=path,
+                parameters=[],
+                description=preset_description,
+                embedding_text=preset_embedding_text,
+                faiss_index=faiss_id
+            )
+            
+            if preset_success:
+                self.osc_handler.send_confirm(f"added effect: {path} with default preset")
+                logger.info(f"Added effect: {path} with default preset at FAISS {faiss_id}")
+            else:
+                self.osc_handler.send_confirm(f"added effect: {path} (preset creation failed)")
+                logger.warning(f"Effect added but default preset failed: {path}")
+            
+        except Exception as e:
+            error_msg = f"add_effect failed: {e}"
+            logger.error(error_msg)
+            self.osc_handler.send_error(error_msg)
+
+    def _handle_add_segment(self, unused_addr: str, *args):
+        """Handle add segment requests."""
+        try:
+            parsed = self.osc_handler.parse_args(*args)
+            description = parsed.get('arg1', '').strip()
+            metadata_str = parsed.get('arg2', '{}')
+            
+            if not description:
+                self.osc_handler.send_error("add_segment requires description")
                 return
             
             # Parse metadata
@@ -311,20 +411,40 @@ class HibikidoServer:
                 return
             
             # Required fields
-            effect_id = metadata.get('effect_id')
-            if not effect_id:
-                self.osc_handler.send_error("effect_id required in metadata")
+            source_path = metadata.get('source_path')
+            if not source_path:
+                self.osc_handler.send_error("source_path required in metadata")
                 return
             
-            parameters = metadata.get('parameters', [])
-            description = metadata.get('description', embedding_text[:50])
+            segmentation_id = metadata.get('segmentation_id', 'manual')
+            start = float(metadata.get('start', 0.0))
+            end = float(metadata.get('end', 1.0))
+
+            # Validate normalized values (0.0 to 1.0)
+            if not (0.0 <= start <= 1.0):
+                self.osc_handler.send_error(f"start must be between 0.0 and 1.0, got {start}")
+                return
+
+            if not (0.0 <= end <= 1.0):
+                self.osc_handler.send_error(f"end must be between 0.0 and 1.0, got {end}")
+                return
+
+            if start >= end:
+                self.osc_handler.send_error(f"start ({start}) must be less than end ({end})")
+                return
             
-            # Create preset
-            preset = {
-                "parameters": parameters,
-                "description": description,
-                "embedding_text": embedding_text
-            }
+            # Verify recording exists
+            recording = self.db_manager.get_recording_by_path(source_path)
+            if not recording:
+                self.osc_handler.send_error(f"recording not found: {source_path}")
+                return
+            
+            # Create hierarchical embedding text
+            embedding_text = self.text_processor.create_segment_embedding_text(
+                segment={'description': description},
+                recording=recording,
+                segmentation={'description': f'Manual segmentation: {segmentation_id}'}
+            )
             
             # Add embedding
             faiss_id = self.embedding_manager.add_embedding(embedding_text)
@@ -332,14 +452,84 @@ class HibikidoServer:
                 self.osc_handler.send_error("failed to create embedding")
                 return
             
-            preset["FAISS_index"] = faiss_id
-            
             # Add to database
-            success = self.db_manager.add_preset_to_effect(effect_id, preset)
+            success = self.db_manager.add_segment(
+                source_path=source_path,
+                segmentation_id=segmentation_id,
+                start=start,
+                end=end,
+                description=description,
+                embedding_text=embedding_text,
+                faiss_index=faiss_id
+            )
             
             if success:
-                self.osc_handler.send_confirm(f"added preset to effect: {effect_id}")
-                logger.info(f"Added preset to effect: {effect_id}")
+                self.osc_handler.send_confirm(f"added segment for {source_path} [{start}-{end}]")
+                logger.info(f"Added segment for {source_path} at FAISS {faiss_id}")
+            else:
+                self.osc_handler.send_error("failed to add segment to database")
+            
+        except Exception as e:
+            error_msg = f"add_segment failed: {e}"
+            logger.error(error_msg)
+            self.osc_handler.send_error(error_msg)
+
+    def _handle_add_preset(self, unused_addr: str, *args):
+        """Handle add preset requests."""
+        try:
+            parsed = self.osc_handler.parse_args(*args)
+            description = parsed.get('arg1', '').strip()
+            metadata_str = parsed.get('arg2', '{}')
+            
+            if not description:
+                self.osc_handler.send_error("add_preset requires description")
+                return
+            
+            # Parse metadata
+            try:
+                metadata = json.loads(metadata_str) if metadata_str != '{}' else {}
+            except json.JSONDecodeError:
+                self.osc_handler.send_error("invalid metadata JSON")
+                return
+            
+            # Required fields
+            effect_path = metadata.get('effect_path')
+            if not effect_path:
+                self.osc_handler.send_error("effect_path required in metadata")
+                return
+            
+            parameters = metadata.get('parameters', [])
+            
+            # Verify effect exists
+            effect = self.db_manager.get_effect_by_path(effect_path)
+            if not effect:
+                self.osc_handler.send_error(f"effect not found: {effect_path}")
+                return
+            
+            # Create hierarchical embedding text
+            embedding_text = self.text_processor.create_preset_embedding_text(
+                preset={'description': description, 'parameters': parameters},
+                effect=effect
+            )
+            
+            # Add embedding
+            faiss_id = self.embedding_manager.add_embedding(embedding_text)
+            if faiss_id is None:
+                self.osc_handler.send_error("failed to create embedding")
+                return
+            
+            # Add to database (separate presets collection)
+            success = self.db_manager.add_preset(
+                effect_path=effect_path,
+                parameters=parameters,
+                description=description,
+                embedding_text=embedding_text,
+                faiss_index=faiss_id
+            )
+            
+            if success:
+                self.osc_handler.send_confirm(f"added preset for {effect_path}")
+                logger.info(f"Added preset for {effect_path} at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_error("failed to add preset to database")
             
@@ -435,6 +625,63 @@ class HibikidoServer:
             error_msg = f"stats failed: {e}"
             logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
+            
+    def _create_display_description(self, embedding_text: str) -> str:
+        """Create human-readable description from embedding text."""
+        try:
+            if not embedding_text:
+                return "untitled"
+            
+            # Simple reverse processing - clean up the embedding text for display
+            # Remove common embedding artifacts and make it more natural
+            
+            words = embedding_text.split()
+            
+            # If we have spaCy, try to make it more natural
+            if hasattr(self, 'text_processor') and self.text_processor.nlp and self.text_processor.spacy_working:
+                try:
+                    doc = self.text_processor.nlp(embedding_text)
+                    
+                    # Extract key phrases and entities
+                    noun_phrases = []
+                    for chunk in doc.noun_chunks:
+                        if len(chunk.text.strip()) > 2:
+                            noun_phrases.append(chunk.text.strip())
+                    
+                    if noun_phrases:
+                        # Use the first good noun phrase as description
+                        description = noun_phrases[0]
+                        # Add additional context if short
+                        if len(description.split()) < 3 and len(noun_phrases) > 1:
+                            description = f"{description} {noun_phrases[1]}"
+                        return description[:60]  # Limit length
+                    
+                except Exception:
+                    pass  # Fall back to simple processing
+            
+            # Simple fallback processing
+            # Take first 4-6 meaningful words and clean them up
+            meaningful_words = []
+            for word in words[:8]:  # Look at first 8 words
+                word = word.strip().lower()
+                if len(word) > 2 and word not in ['the', 'and', 'for', 'with', 'this', 'that']:
+                    meaningful_words.append(word)
+                if len(meaningful_words) >= 6:
+                    break
+            
+            if meaningful_words:
+                description = " ".join(meaningful_words[:6])
+                # Capitalize first word
+                if description:
+                    description = description[0].upper() + description[1:]
+                return description[:60]  # Limit length
+            
+            # Ultimate fallback
+            return embedding_text[:40].strip() or "untitled"
+            
+        except Exception as e:
+            logger.warning(f"Failed to create display description: {e}")
+            return "untitled"
     
     def _handle_stop(self, unused_addr: str, *args):
         """Handle stop requests."""

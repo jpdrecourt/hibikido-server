@@ -114,7 +114,7 @@ class EmbeddingManager:
     
     def search(self, query: str, top_k: int = 10, db_manager=None) -> List[Dict[str, Any]]:
         """
-        Search FAISS index and return MongoDB documents.
+        Search FAISS index and return MongoDB documents (updated for path-based schema).
         
         Args:
             query: Search query text
@@ -144,7 +144,7 @@ class EmbeddingManager:
             k = min(top_k, self.index.ntotal)
             scores, indices = self.index.search(query_embedding, k)
             
-            # MongoDB lookups by FAISS_index
+            # MongoDB lookups by FAISS_index (updated for separate presets collection)
             results = []
             for faiss_idx, score in zip(indices[0], scores[0]):
                 # Convert numpy.int64 to regular Python int for MongoDB
@@ -160,18 +160,14 @@ class EmbeddingManager:
                     })
                     continue
                 
-                # Look for preset with this FAISS_index
-                effect = db_manager.effects.find_one({"presets.FAISS_index": faiss_idx})
-                if effect:
-                    preset = next((p for p in effect.get("presets", []) 
-                                 if p.get("FAISS_index") == faiss_idx), None)
-                    if preset:
-                        results.append({
-                            "collection": "presets", 
-                            "document": preset,
-                            "effect": effect,
-                            "score": float(score)
-                        })
+                # Look for preset with this FAISS_index (now in separate collection)
+                preset = db_manager.presets.find_one({"FAISS_index": faiss_idx})
+                if preset:
+                    results.append({
+                        "collection": "presets", 
+                        "document": preset,
+                        "score": float(score)
+                    })
             
             logger.info(f"Search '{query}' returned {len(results)} results")
             return results
@@ -179,14 +175,14 @@ class EmbeddingManager:
         except Exception as e:
             logger.error(f"Search failed for '{query}': {e}")
             return []
-    
+        
     def get_total_embeddings(self) -> int:
         """Get total number of embeddings."""
         return self.index.ntotal if self.index else 0
     
     def rebuild_from_database(self, db_manager, text_processor=None) -> Dict[str, int]:
         """
-        Rebuild entire FAISS index from MongoDB with hierarchical context.
+        Rebuild entire FAISS index from MongoDB (updated for path-based schema).
         
         Args:
             db_manager: HibikidoDatabase instance
@@ -195,7 +191,7 @@ class EmbeddingManager:
         Returns:
             Statistics about rebuild process
         """
-        logger.info("Rebuilding FAISS index from database with hierarchical context...")
+        logger.info("Rebuilding FAISS index from database with path-based schema...")
         
         stats = {
             "segments_processed": 0,
@@ -217,8 +213,8 @@ class EmbeddingManager:
                     try:
                         stats["segments_processed"] += 1
                         
-                        # Get context for hierarchical embedding
-                        recording = db_manager.get_recording(segment.get("source_id"))
+                        # Get context for hierarchical embedding (path-based lookup)
+                        recording = db_manager.get_recording_by_path(segment.get("source_path"))
                         segmentation = db_manager.get_segmentation(segment.get("segmentation_id"))
                         
                         # Create hierarchical embedding text
@@ -266,39 +262,40 @@ class EmbeddingManager:
                         stats["errors"] += 1
                         logger.error(f"Failed to process segment {segment.get('_id', 'unknown')}: {e}")
             
-            # Process effect presets with hierarchical context
-            effects = db_manager.effects.find({"presets": {"$exists": True}})
-            for effect in effects:
+            # Process presets with hierarchical context (now separate collection)
+            presets = db_manager.presets.find({})
+            for preset in presets:
                 try:
-                    presets = effect.get("presets", [])
-                    for preset_idx, preset in enumerate(presets):
-                        stats["presets_processed"] += 1
+                    stats["presets_processed"] += 1
+                    
+                    if text_processor:
+                        # Get effect context (path-based lookup)
+                        effect = db_manager.get_effect_by_path(preset.get("effect_path"))
                         
-                        if text_processor:
-                            # Create hierarchical embedding text
-                            embedding_text = text_processor.create_preset_embedding_text(preset, effect)
-                        else:
-                            # Fallback to existing embedding_text
-                            embedding_text = preset.get("embedding_text", "")
+                        # Create hierarchical embedding text
+                        embedding_text = text_processor.create_preset_embedding_text(preset, effect)
+                    else:
+                        # Fallback to existing embedding_text
+                        embedding_text = preset.get("embedding_text", "")
+                    
+                    if embedding_text:
+                        faiss_id = self.add_embedding(embedding_text)
                         
-                        if embedding_text:
-                            faiss_id = self.add_embedding(embedding_text)
+                        if faiss_id is not None:
+                            # Update preset with new FAISS_index and embedding_text
+                            update_data = {"FAISS_index": faiss_id}
+                            if text_processor:
+                                update_data["embedding_text"] = embedding_text
                             
-                            if faiss_id is not None:
-                                # Update preset with new FAISS_index and embedding_text
-                                update_data = {f"presets.{preset_idx}.FAISS_index": faiss_id}
-                                if text_processor:
-                                    update_data[f"presets.{preset_idx}.embedding_text"] = embedding_text
-                                
-                                db_manager.effects.update_one(
-                                    {"_id": effect["_id"]},
-                                    {"$set": update_data}
-                                )
-                                stats["presets_added"] += 1
+                            db_manager.presets.update_one(
+                                {"_id": preset["_id"]},
+                                {"$set": update_data}
+                            )
+                            stats["presets_added"] += 1
                 
                 except Exception as e:
                     stats["errors"] += 1
-                    logger.error(f"Failed to process effect {effect.get('_id', 'unknown')}: {e}")
+                    logger.error(f"Failed to process preset {preset.get('_id', 'unknown')}: {e}")
             
             logger.info(f"Index rebuild complete: {stats}")
             return stats
@@ -307,3 +304,5 @@ class EmbeddingManager:
             logger.error(f"Index rebuild failed: {e}")
             stats["errors"] += 1
             return stats
+
+    

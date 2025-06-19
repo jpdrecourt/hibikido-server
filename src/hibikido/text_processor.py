@@ -252,26 +252,3 @@ class TextProcessor:
         text = re.sub(r'\s+', ' ', text)
         
         return text.strip()
-    
-    def enhance_query(self, query: str) -> str:
-        """Enhance user queries for better matching."""
-        if not query:
-            return ""
-        
-        # Simple query enhancement - just clean it
-        keywords = self._extract_keywords(query, max_words=10)
-        return " ".join(keywords)
-    
-    # Legacy methods for backward compatibility
-    def create_embedding_sentence(self, entry: Dict[str, Any]) -> str:
-        """Legacy method - creates embedding from single entry."""
-        description = entry.get("description", "")
-        if description:
-            return self._clean_text(description)
-        
-        # Try other fields
-        title = entry.get("title", "")
-        if title:
-            return self._clean_text(title)
-        
-        return "audio content"

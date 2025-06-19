@@ -26,11 +26,14 @@ class OSCHandler:
         self.server = None
         self.dispatcher = None
         
-        # OSC Address definitions
+        #  OSC Address definitions
         self.addresses = {
             'search': '/search',
-            'add': '/add',
-            'import_csv': '/import_csv',
+            'add_recording': '/add_recording',
+            'add_effect': '/add_effect', 
+            'add_segment': '/add_segment',
+            'add_preset': '/add_preset',
+            'rebuild_index': '/rebuild_index',
             'get_by_id': '/get_by_id',
             'soft_delete': '/soft_delete',
             'update_embedding': '/update_embedding',

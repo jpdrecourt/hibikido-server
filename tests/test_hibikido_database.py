@@ -1,8 +1,8 @@
 """
-Test Suite for Hibikidō Database Manager
-========================================
+Test Suite for Hibikidō Database Manager (Updated for Path-based Schema)
+========================================================================
 
-Comprehensive tests for the hierarchical database schema.
+Comprehensive tests for the hierarchical database schema with path-based references.
 Run with: python -m pytest test_hibikido_database.py -v
 """
 
@@ -12,14 +12,13 @@ from datetime import datetime
 from typing import Dict, Any, List
 import uuid
 
-# Assuming the new database manager is in database_manager_v2.py
 from hibikido.database_manager import HibikidoDatabase
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
 
 class TestHibikidoDatabase:
-    """Test class for the new hierarchical database."""
+    """Test class for the path-based hierarchical database."""
     
     @pytest.fixture(scope="function")
     def db(self):
@@ -37,19 +36,14 @@ class TestHibikidoDatabase:
         test_db.close()
     
     @pytest.fixture
-    def sample_recording_id(self):
-        """Generate a unique recording ID for tests."""
-        return f"rec_{uuid.uuid4().hex[:8]}"
+    def sample_recording_path(self):
+        """Generate a unique recording path for tests."""
+        return f"test/recordings/sample_{uuid.uuid4().hex[:8]}.wav"
     
     @pytest.fixture
-    def sample_segmentation_id(self):
-        """Generate a unique segmentation ID for tests."""
-        return f"seg_{uuid.uuid4().hex[:8]}"
-    
-    @pytest.fixture
-    def sample_effect_id(self):
-        """Generate a unique effect ID for tests."""
-        return f"fx_{uuid.uuid4().hex[:8]}"
+    def sample_effect_path(self):
+        """Generate a unique effect path for tests."""
+        return f"test/effects/sample_{uuid.uuid4().hex[:8]}.maxpat"
     
     def test_database_connection(self, db):
         """Test basic database connection and initialization."""
@@ -58,132 +52,89 @@ class TestHibikidoDatabase:
         assert db.recordings is not None
         assert db.segments is not None
         assert db.effects is not None
+        assert db.presets is not None  # Now separate collection
         assert db.performances is not None
         assert db.segmentations is not None
     
-    # RECORDINGS TESTS
+    # RECORDINGS TESTS (path-based)
     
-    def test_add_recording(self, db, sample_recording_id):
-        """Test adding a new recording."""
+    def test_add_recording(self, db, sample_recording_path):
+        """Test adding a new recording with path as identifier."""
         result = db.add_recording(
-            recording_id=sample_recording_id,
-            path="test/audio/field_recording_001.wav",
+            path=sample_recording_path,
             description="Birds singing in the morning forest"
         )
         assert result is True
         
         # Verify it was added
-        recording = db.get_recording(sample_recording_id)
+        recording = db.get_recording_by_path(sample_recording_path)
         assert recording is not None
-        assert recording["path"] == "test/audio/field_recording_001.wav"
+        assert recording["path"] == sample_recording_path
         assert recording["description"] == "Birds singing in the morning forest"
         assert "created_at" in recording
     
-    def test_add_duplicate_recording(self, db, sample_recording_id):
-        """Test that duplicate recording IDs are rejected."""
+    def test_add_duplicate_recording(self, db, sample_recording_path):
+        """Test that duplicate recording paths are rejected."""
         # Add first recording
-        db.add_recording(sample_recording_id, "path1.wav", "Description 1")
+        db.add_recording(sample_recording_path, "Description 1")
         
         # Try to add duplicate
-        result = db.add_recording(sample_recording_id, "path2.wav", "Description 2")
+        result = db.add_recording(sample_recording_path, "Description 2")
         assert result is False
     
     def test_get_all_recordings(self, db):
         """Test retrieving all recordings."""
         # Add multiple recordings
-        rec_ids = [f"rec_{i}" for i in range(3)]
-        for i, rec_id in enumerate(rec_ids):
-            db.add_recording(rec_id, f"path_{i}.wav", f"Description {i}")
+        paths = [f"test/rec_{i}.wav" for i in range(3)]
+        for i, path in enumerate(paths):
+            db.add_recording(path, f"Description {i}")
         
         recordings = db.get_all_recordings()
         assert len(recordings) >= 3
         
         # Check that our recordings are in the results
-        rec_ids_found = [r["_id"] for r in recordings]
-        for rec_id in rec_ids:
-            assert rec_id in rec_ids_found
+        found_paths = [r["path"] for r in recordings]
+        for path in paths:
+            assert path in found_paths
     
-    def test_update_recording(self, db, sample_recording_id):
-        """Test updating recording metadata."""
-        # Add recording
-        db.add_recording(sample_recording_id, "original.wav", "Original description")
-        
-        # Update it
-        result = db.update_recording(sample_recording_id, {
-            "description": "Updated description",
-            "duration": 120.5
-        })
-        assert result is True
-        
-        # Verify update
-        recording = db.get_recording(sample_recording_id)
-        assert recording["description"] == "Updated description"
-        assert recording["duration"] == 120.5
-        assert "updated_at" in recording
+    # SEGMENTS TESTS (reference by source_path)
     
-    # SEGMENTATIONS TESTS
-    
-    def test_add_segmentation(self, db, sample_segmentation_id):
-        """Test adding a segmentation method."""
-        result = db.add_segmentation(
-            segmentation_id=sample_segmentation_id,
-            method="manual",
-            parameters={"threshold": 0.5, "min_duration": 1.0},
-            description="Hand-curated segments focusing on bird calls"
-        )
-        assert result is True
-        
-        # Verify it was added
-        segmentation = db.get_segmentation(sample_segmentation_id)
-        assert segmentation is not None
-        assert segmentation["method"] == "manual"
-        assert segmentation["parameters"]["threshold"] == 0.5
-        assert segmentation["description"] == "Hand-curated segments focusing on bird calls"
-    
-    # SEGMENTS TESTS
-    
-    def test_add_segment(self, db, sample_recording_id, sample_segmentation_id):
-        """Test adding a segment."""
-        # Setup dependencies
-        db.add_recording(sample_recording_id, "test.wav", "Test recording")
-        db.add_segmentation(sample_segmentation_id, "manual", {}, "Test segmentation")
+    def test_add_segment(self, db, sample_recording_path):
+        """Test adding a segment with path-based reference."""
+        # Setup recording first
+        db.add_recording(sample_recording_path, "Test recording")
         
         # Add segment
-        segment_id = f"seg_{uuid.uuid4().hex[:8]}"
         result = db.add_segment(
-            segment_id=segment_id,
-            source_id=sample_recording_id,
-            segmentation_id=sample_segmentation_id,
-            start=0.0,
-            end=0.25,
+            source_path=sample_recording_path,
+            segmentation_id="manual",
+            start=0.1,
+            end=0.6,
             description="High-pitched bird call",
             embedding_text="high pitched bird call morning forest",
             faiss_index=42
         )
         assert result is True
         
-        # Verify it was added
-        segment = db.get_segment(segment_id)
-        assert segment is not None
-        assert segment["source_id"] == sample_recording_id
-        assert segment["segmentation_id"] == sample_segmentation_id
-        assert segment["start"] == 0.0
-        assert segment["end"] == 0.25
+        # Verify segment was added
+        segments = db.get_segments_by_recording_path(sample_recording_path)
+        assert len(segments) == 1
+        
+        segment = segments[0]
+        assert segment["source_path"] == sample_recording_path
+        assert segment["start"] == 0.1
+        assert segment["end"] == 0.6
         assert segment["FAISS_index"] == 42
     
-    def test_get_segment_by_faiss_id(self, db, sample_recording_id, sample_segmentation_id):
+    def test_get_segment_by_faiss_id(self, db, sample_recording_path):
         """Test retrieving segment by FAISS index."""
         # Setup
-        db.add_recording(sample_recording_id, "test.wav", "Test recording")
-        db.add_segmentation(sample_segmentation_id, "manual", {}, "Test segmentation")
+        db.add_recording(sample_recording_path, "Test recording")
         
-        segment_id = f"seg_{uuid.uuid4().hex[:8]}"
         faiss_index = 123
-        
         db.add_segment(
-            segment_id=segment_id,
-            source_id=sample_recording_id,
-            segmentation_id=sample_segmentation_id,
+            source_path=sample_recording_path,
+            segmentation_id="manual",
             start=0.0,
             end=0.5,
             description="Test segment",
@@ -194,145 +145,169 @@ class TestHibikidoDatabase:
         # Retrieve by FAISS index
         segment = db.get_segment_by_faiss_id(faiss_index)
         assert segment is not None
-        assert segment["_id"] == segment_id
         assert segment["FAISS_index"] == faiss_index
+        assert segment["source_path"] == sample_recording_path
     
-    def test_get_segments_by_recording(self, db, sample_recording_id, sample_segmentation_id):
-        """Test getting all segments for a recording."""
+    def test_get_segments_by_recording_path(self, db, sample_recording_path):
+        """Test getting all segments for a recording by path."""
         # Setup
-        db.add_recording(sample_recording_id, "test.wav", "Test recording")
-        db.add_segmentation(sample_segmentation_id, "manual", {}, "Test segmentation")
+        db.add_recording(sample_recording_path, "Test recording")
         
         # Add multiple segments
-        segment_ids = []
+        segment_data = []
         for i in range(3):
-            segment_id = f"seg_{i}_{uuid.uuid4().hex[:8]}"
-            segment_ids.append(segment_id)
-            db.add_segment(
-                segment_id=segment_id,
-                source_id=sample_recording_id,
-                segmentation_id=sample_segmentation_id,
-                start=i * 0.33,
-                end=(i + 1) * 0.33,
+            success = db.add_segment(
+                source_path=sample_recording_path,
+                segmentation_id="manual",
+                start=i * 0.3,
+                end=(i + 1) * 0.3,
                 description=f"Segment {i}",
                 embedding_text=f"segment {i}"
             )
+            assert success, f"Failed to add segment {i}"
         
         # Retrieve segments
-        segments = db.get_segments_by_recording(sample_recording_id)
+        segments = db.get_segments_by_recording_path(sample_recording_path)
         assert len(segments) == 3
         
         # Check they're sorted by start time
         for i in range(len(segments) - 1):
             assert segments[i]["start"] <= segments[i + 1]["start"]
     
-    def test_segments_without_embeddings(self, db, sample_recording_id, sample_segmentation_id):
-        """Test finding segments without FAISS embeddings."""
+    def test_normalized_segment_values(self, db, sample_recording_path):
+        """Test that segments store normalized 0-1 values."""
         # Setup
-        db.add_recording(sample_recording_id, "test.wav", "Test recording")
-        db.add_segmentation(sample_segmentation_id, "manual", {}, "Test segmentation")
+        db.add_recording(sample_recording_path, "Test recording")
         
-        # Add segment without FAISS index
-        segment_id = f"seg_{uuid.uuid4().hex[:8]}"
+        # Add segment with normalized values
         db.add_segment(
-            segment_id=segment_id,
-            source_id=sample_recording_id,
-            segmentation_id=sample_segmentation_id,
-            start=0.0,
-            end=0.5,
-            description="No embedding yet",
-            embedding_text="no embedding"
-            # Note: no faiss_index parameter
+            source_path=sample_recording_path,
+            segmentation_id="manual",
+            start=0.25,  # Normalized values
+            end=0.75,
+            description="Middle section",
+            embedding_text="middle section"
         )
         
-        # Find segments without embeddings
-        segments = db.get_segments_without_embeddings()
-        segment_ids = [s["_id"] for s in segments]
-        assert segment_id in segment_ids
+        segments = db.get_segments_by_recording_path(sample_recording_path)
+        segment = segments[0]
+        
+        assert segment["start"] == 0.25
+        assert segment["end"] == 0.75
+        assert 0.0 <= segment["start"] <= 1.0
+        assert 0.0 <= segment["end"] <= 1.0
     
-    # EFFECTS TESTS
+    # EFFECTS TESTS (path-based)
     
-    def test_add_effect(self, db, sample_effect_id):
-        """Test adding an effect."""
+    def test_add_effect(self, db, sample_effect_path):
+        """Test adding an effect with path as identifier."""
         result = db.add_effect(
-            effect_id=sample_effect_id,
+            path=sample_effect_path,
             name="Granular Delay",
-            path="/effects/granular_delay.maxpat",
             description="Granular synthesis delay with pitch shifting"
         )
         assert result is True
         
         # Verify it was added
-        effect = db.get_effect(sample_effect_id)
+        effect = db.get_effect_by_path(sample_effect_path)
         assert effect is not None
         assert effect["name"] == "Granular Delay"
-        assert effect["path"] == "/effects/granular_delay.maxpat"
-        assert effect["presets"] == []
+        assert effect["path"] == sample_effect_path
+        assert effect["description"] == "Granular synthesis delay with pitch shifting"
     
-    def test_add_preset_to_effect(self, db, sample_effect_id):
-        """Test adding a preset to an effect."""
+    def test_add_duplicate_effect(self, db, sample_effect_path):
+        """Test that duplicate effect paths are rejected."""
+        # Add first effect
+        db.add_effect(sample_effect_path, "Effect 1", "Description 1")
+        
+        # Try to add duplicate
+        result = db.add_effect(sample_effect_path, "Effect 2", "Description 2")
+        assert result is False
+    
+    # PRESETS TESTS (separate collection, reference by effect_path)
+    
+    def test_add_preset(self, db, sample_effect_path):
+        """Test adding a preset to separate presets collection."""
         # Add effect first
-        db.add_effect(sample_effect_id, "Test Effect", "/test.maxpat")
+        db.add_effect(sample_effect_path, "Test Effect", "Test effect description")
         
         # Add preset
-        preset = {
-            "parameters": [
-                {"name": "delay_time", "value": 0.5},
-                {"name": "feedback", "value": 0.7},
-                {"name": "grain_size", "value": 0.1}
-            ],
-            "description": "Ethereal long delay with small grains",
-            "embedding_text": "ethereal long delay small grains atmospheric",
-            "FAISS_index": 456
-        }
-        
-        result = db.add_preset_to_effect(sample_effect_id, preset)
+        result = db.add_preset(
+            effect_path=sample_effect_path,
+            parameters=[0.5, 0.7, 0.1],
+            description="Ethereal long delay with small grains",
+            embedding_text="ethereal long delay small grains atmospheric",
+            faiss_index=456
+        )
         assert result is True
         
         # Verify preset was added
-        effect = db.get_effect(sample_effect_id)
-        assert len(effect["presets"]) == 1
-        assert effect["presets"][0]["description"] == "Ethereal long delay with small grains"
-        assert effect["presets"][0]["FAISS_index"] == 456
-        assert len(effect["presets"][0]["parameters"]) == 3
+        presets = db.get_presets_by_effect_path(sample_effect_path)
+        assert len(presets) == 1
+        
+        preset = presets[0]
+        assert preset["effect_path"] == sample_effect_path
+        assert preset["description"] == "Ethereal long delay with small grains"
+        assert preset["FAISS_index"] == 456
+        assert preset["parameters"] == [0.5, 0.7, 0.1]
     
-    def test_get_preset_by_faiss_id(self, db, sample_effect_id):
+    def test_get_preset_by_faiss_id(self, db, sample_effect_path):
         """Test retrieving preset by FAISS index."""
         # Setup
-        db.add_effect(sample_effect_id, "Test Effect", "/test.maxpat")
+        db.add_effect(sample_effect_path, "Test Effect", "Test description")
         
-        preset = {
-            "parameters": [{"name": "param1", "value": 0.5}],
-            "description": "Test preset",
-            "embedding_text": "test preset",
-            "FAISS_index": 789
-        }
-        
-        db.add_preset_to_effect(sample_effect_id, preset)
+        faiss_index = 789
+        db.add_preset(
+            effect_path=sample_effect_path,
+            parameters=[0.5],
+            description="Test preset",
+            embedding_text="test preset",
+            faiss_index=faiss_index
+        )
         
         # Retrieve by FAISS index
-        result = db.get_preset_by_faiss_id(789)
-        assert result is not None
-        
-        effect, found_preset = result
-        assert effect["_id"] == sample_effect_id
-        assert found_preset["FAISS_index"] == 789
-        assert found_preset["description"] == "Test preset"
+        preset = db.get_preset_by_faiss_id(faiss_index)
+        assert preset is not None
+        assert preset["FAISS_index"] == faiss_index
+        assert preset["effect_path"] == sample_effect_path
+        assert preset["description"] == "Test preset"
     
-    def test_presets_without_embeddings(self, db, sample_effect_id):
+    def test_get_presets_by_effect_path(self, db, sample_effect_path):
+        """Test getting all presets for an effect by path."""
+        # Setup
+        db.add_effect(sample_effect_path, "Test Effect", "Test description")
+        
+        # Add multiple presets
+        for i in range(3):
+            success = db.add_preset(
+                effect_path=sample_effect_path,
+                parameters=[i * 0.1],
+                description=f"Preset {i}",
+                embedding_text=f"preset {i}"
+            )
+            assert success, f"Failed to add preset {i}"
+        
+        # Retrieve presets
+        presets = db.get_presets_by_effect_path(sample_effect_path)
+        assert len(presets) == 3
+        
+        # Check all reference the same effect
+        for preset in presets:
+            assert preset["effect_path"] == sample_effect_path
+    
+    def test_presets_without_embeddings(self, db, sample_effect_path):
         """Test finding presets without FAISS embeddings."""
         # Setup
-        db.add_effect(sample_effect_id, "Test Effect", "/test.maxpat")
+        db.add_effect(sample_effect_path, "Test Effect", "Test description")
         
         # Add preset without FAISS index
-        preset = {
-            "parameters": [{"name": "param1", "value": 0.5}],
-            "description": "No embedding preset",
-            "embedding_text": "no embedding preset"
-            # Note: no FAISS_index
-        }
-        
-        db.add_preset_to_effect(sample_effect_id, preset)
+        db.add_preset(
+            effect_path=sample_effect_path,
+            parameters=[0.5],
+            description="No embedding preset",
+            embedding_text="no embedding preset"
+            # Note: no faiss_index parameter
+        )
         
         # Find presets without embeddings
         presets = db.get_presets_without_embeddings()
@@ -340,80 +315,24 @@ class TestHibikidoDatabase:
         
         # Check our preset is in the results
         found = False
-        for effect_id, preset_index, preset_data in presets:
-            if effect_id == sample_effect_id and preset_data["description"] == "No embedding preset":
+        for preset in presets:
+            if (preset["effect_path"] == sample_effect_path and 
+                preset["description"] == "No embedding preset"):
                 found = True
                 break
         assert found
     
-    # PERFORMANCES TESTS
-    
-    def test_add_performance(self, db):
-        """Test adding a performance session."""
-        performance_id = f"perf_{uuid.uuid4().hex[:8]}"
-        test_date = datetime(2024, 1, 15, 14, 30, 0)
-        
-        result = db.add_performance(performance_id, test_date)
-        assert result is True
-        
-        # Verify it was added
-        performance = db.get_performance(performance_id)
-        assert performance is not None
-        assert performance["date"] == test_date
-        assert performance["invocations"] == []
-    
-    def test_add_invocation(self, db, sample_recording_id, sample_segmentation_id):
-        """Test adding invocations to a performance."""
-        # Setup
-        performance_id = f"perf_{uuid.uuid4().hex[:8]}"
-        db.add_performance(performance_id)
-        
-        # Setup segment for reference
-        db.add_recording(sample_recording_id, "test.wav", "Test recording")
-        db.add_segmentation(sample_segmentation_id, "manual", {}, "Test segmentation")
-        segment_id = f"seg_{uuid.uuid4().hex[:8]}"
-        db.add_segment(
-            segment_id=segment_id,
-            source_id=sample_recording_id,
-            segmentation_id=sample_segmentation_id,
-            start=0.0,
-            end=0.5,
-            description="Test segment",
-            embedding_text="test segment"
-        )
-        
-        # Add invocation
-        result = db.add_invocation(
-            performance_id=performance_id,
-            text="ethereal morning birds",
-            time=5.2,
-            segment_id=segment_id
-        )
-        assert result is True
-        
-        # Verify invocation was added
-        performance = db.get_performance(performance_id)
-        assert len(performance["invocations"]) == 1
-        
-        invocation = performance["invocations"][0]
-        assert invocation["text"] == "ethereal morning birds"
-        assert invocation["time"] == 5.2
-        assert invocation["segment_id"] == segment_id
-    
     # STATISTICS TESTS
     
-    def test_get_stats(self, db, sample_recording_id, sample_segmentation_id, sample_effect_id):
+    def test_get_stats(self, db, sample_recording_path, sample_effect_path):
         """Test getting comprehensive database statistics."""
-        # Add some test data
-        db.add_recording(sample_recording_id, "test.wav", "Test recording")
-        db.add_segmentation(sample_segmentation_id, "manual", {}, "Test segmentation")
+        # Add test data
+        db.add_recording(sample_recording_path, "Test recording")
         
         # Add segment with embedding
-        segment_id = f"seg_{uuid.uuid4().hex[:8]}"
         db.add_segment(
-            segment_id=segment_id,
-            source_id=sample_recording_id,
-            segmentation_id=sample_segmentation_id,
+            source_path=sample_recording_path,
+            segmentation_id="manual",
             start=0.0,
             end=0.5,
             description="Test segment",
@@ -422,14 +341,14 @@ class TestHibikidoDatabase:
         )
         
         # Add effect with preset
-        db.add_effect(sample_effect_id, "Test Effect", "/test.maxpat")
-        preset = {
-            "parameters": [{"name": "param1", "value": 0.5}],
-            "description": "Test preset",
-            "embedding_text": "test preset",
-            "FAISS_index": 456
-        }
-        db.add_preset_to_effect(sample_effect_id, preset)
+        db.add_effect(sample_effect_path, "Test Effect", "Test description")
+        db.add_preset(
+            effect_path=sample_effect_path,
+            parameters=[0.5],
+            description="Test preset",
+            embedding_text="test preset",
+            faiss_index=456
+        )
         
         # Add performance
         performance_id = f"perf_{uuid.uuid4().hex[:8]}"
@@ -442,145 +361,154 @@ class TestHibikidoDatabase:
         assert stats["segments"] >= 1
         assert stats["segments_with_embeddings"] >= 1
         assert stats["effects"] >= 1
-        assert stats["presets"] >= 1
+        assert stats["presets"] >= 1  # Now separate collection
         assert stats["presets_with_embeddings"] >= 1
         assert stats["performances"] >= 1
-        assert stats["segmentations"] >= 1
         assert stats["total_searchable_items"] >= 2  # segment + preset
     
     # INTEGRATION TESTS
     
-    def test_full_workflow(self, db):
-        """Test a complete workflow from recording to search."""
-        # 1. Add a recording
-        recording_id = f"rec_{uuid.uuid4().hex[:8]}"
-        db.add_recording(
-            recording_id=recording_id,
-            path="forest/morning_birds.wav",
-            description="Dawn chorus in temperate forest"
-        )
+    def test_full_path_based_workflow(self, db):
+        """Test a complete workflow using path-based references."""
+        # 1. Add recordings
+        recording_paths = [
+            "sounds/forest/morning_birds.wav",
+            "sounds/city/traffic_ambience.wav"
+        ]
         
-        # 2. Add segmentation method
-        segmentation_id = f"seg_method_{uuid.uuid4().hex[:8]}"
-        db.add_segmentation(
-            segmentation_id=segmentation_id,
-            method="manual",
-            parameters={"min_duration": 0.5},
-            description="Hand-segmented bird calls"
-        )
+        for path in recording_paths:
+            success = db.add_recording(
+                path=path,
+                description=f"Recording: {path.split('/')[-1]}"
+            )
+            assert success, f"Failed to add recording {path}"
         
-        # 3. Add segments
-        segments = [
+        # 2. Add segments referencing by path
+        segments_data = [
             {
-                "id": f"seg_1_{uuid.uuid4().hex[:8]}",
-                "start": 0.0, "end": 0.2,
-                "description": "Robin morning call",
-                "embedding_text": "robin bird call morning cheerful",
+                "source_path": "sounds/forest/morning_birds.wav",
+                "start": 0.0, "end": 0.3,
+                "description": "Robin territorial call",
+                "embedding_text": "robin territorial call bright morning",
                 "faiss_index": 100
             },
             {
-                "id": f"seg_2_{uuid.uuid4().hex[:8]}",
-                "start": 0.3, "end": 0.7,
-                "description": "Blackbird territorial song",
-                "embedding_text": "blackbird territorial song melodic",
+                "source_path": "sounds/forest/morning_birds.wav", 
+                "start": 0.4, "end": 0.8,
+                "description": "Blackbird melodic song",
+                "embedding_text": "blackbird melodic song complex musical",
                 "faiss_index": 101
+            },
+            {
+                "source_path": "sounds/city/traffic_ambience.wav",
+                "start": 0.0, "end": 1.0,
+                "description": "Urban traffic flow",
+                "embedding_text": "urban traffic flow constant rumble",
+                "faiss_index": 102
             }
         ]
         
-        for seg in segments:
-            db.add_segment(
-                segment_id=seg["id"],
-                source_id=recording_id,
-                segmentation_id=segmentation_id,
+        added_segments = []
+        for seg in segments_data:
+            success = db.add_segment(
+                source_path=seg["source_path"],
+                segmentation_id="manual",
                 start=seg["start"],
                 end=seg["end"],
                 description=seg["description"],
                 embedding_text=seg["embedding_text"],
                 faiss_index=seg["faiss_index"]
             )
+            assert success, f"Failed to add segment {seg['description']}"
+            added_segments.append(seg)
         
-        # 4. Add an effect with presets
-        effect_id = f"fx_{uuid.uuid4().hex[:8]}"
-        db.add_effect(
-            effect_id=effect_id,
-            name="Bird Harmonizer",
-            path="/effects/bird_harmonizer.maxpat",
-            description="Adds harmonic layers to bird calls"
-        )
+        # 3. Add effects
+        effect_paths = [
+            "effects/reverb/cathedral.maxpat",
+            "effects/granular/processor.maxpat"
+        ]
         
-        presets = [
+        for path in effect_paths:
+            success = db.add_effect(
+                path=path,
+                name=path.split('/')[-1].split('.')[0],
+                description=f"Effect: {path}"
+            )
+            assert success, f"Failed to add effect {path}"
+        
+        # 4. Add presets referencing by effect path
+        presets_data = [
             {
-                "parameters": [
-                    {"name": "harmony_count", "value": 3},
-                    {"name": "pitch_shift", "value": 0.7},
-                    {"name": "reverb", "value": 0.4}
-                ],
-                "description": "Ethereal bird chorus effect",
-                "embedding_text": "ethereal bird chorus harmony atmospheric",
-                "FAISS_index": 200
+                "effect_path": "effects/reverb/cathedral.maxpat",
+                "parameters": [0.8, 0.3, 0.9],
+                "description": "Warm cathedral reverb",
+                "embedding_text": "warm cathedral reverb spacious sacred",
+                "faiss_index": 200
             },
             {
-                "parameters": [
-                    {"name": "harmony_count", "value": 1},
-                    {"name": "pitch_shift", "value": -0.3},
-                    {"name": "reverb", "value": 0.1}
-                ],
-                "description": "Deep forest ambience",
-                "embedding_text": "deep forest ambience low pitch dark",
-                "FAISS_index": 201
+                "effect_path": "effects/granular/processor.maxpat",
+                "parameters": [0.05, 0.2, 2.0],
+                "description": "Ethereal time stretch",
+                "embedding_text": "ethereal time stretch atmospheric slow",
+                "faiss_index": 201
             }
         ]
         
-        for preset in presets:
-            db.add_preset_to_effect(effect_id, preset)
+        added_presets = []
+        for preset in presets_data:
+            success = db.add_preset(
+                effect_path=preset["effect_path"],
+                parameters=preset["parameters"],
+                description=preset["description"],
+                embedding_text=preset["embedding_text"],
+                faiss_index=preset["faiss_index"]
+            )
+            assert success, f"Failed to add preset {preset['description']}"
+            added_presets.append(preset)
         
-        # 5. Simulate a performance
-        performance_id = f"perf_{uuid.uuid4().hex[:8]}"
-        db.add_performance(performance_id)
+        # 5. Verify path-based relationships
+        # Check segments for forest recording
+        forest_segments = db.get_segments_by_recording_path("sounds/forest/morning_birds.wav")
+        assert len(forest_segments) == 2
         
-        # Add some invocations
-        db.add_invocation(performance_id, "cheerful morning robin", 0.0, segments[0]["id"])
-        db.add_invocation(performance_id, "ethereal bird harmony", 5.2, effect=effect_id)
+        # Check presets for reverb effect
+        reverb_presets = db.get_presets_by_effect_path("effects/reverb/cathedral.maxpat")
+        assert len(reverb_presets) == 1
         
-        # 6. Verify everything works
-        # Check we can retrieve by FAISS IDs
+        # 6. Verify FAISS lookups work
         robin_segment = db.get_segment_by_faiss_id(100)
-        assert robin_segment["description"] == "Robin morning call"
+        assert robin_segment is not None
+        assert robin_segment["description"] == "Robin territorial call"
+        assert robin_segment["source_path"] == "sounds/forest/morning_birds.wav"
         
-        ethereal_result = db.get_preset_by_faiss_id(200)
-        assert ethereal_result is not None
-        effect, preset = ethereal_result
-        assert preset["description"] == "Ethereal bird chorus effect"
+        cathedral_preset = db.get_preset_by_faiss_id(200)
+        assert cathedral_preset is not None
+        assert cathedral_preset["description"] == "Warm cathedral reverb"
+        assert cathedral_preset["effect_path"] == "effects/reverb/cathedral.maxpat"
         
-        # Check relationships work
-        recording_segments = db.get_segments_by_recording(recording_id)
-        assert len(recording_segments) == 2
-        
-        segmentation_segments = db.get_segments_by_segmentation(segmentation_id)
-        assert len(segmentation_segments) == 2
-        
-        # Check performance
-        performance = db.get_performance(performance_id)
-        assert len(performance["invocations"]) == 2
-        
-        # Check stats
+        # 7. Check stats
         stats = db.get_stats()
-        assert stats["total_searchable_items"] >= 4  # 2 segments + 2 presets
+        assert stats["recordings"] >= 2
+        assert stats["segments"] >= 3
+        assert stats["effects"] >= 2
+        assert stats["presets"] >= 2
+        assert stats["total_searchable_items"] >= 5
+        
+        print("✅ Full path-based workflow test passed!")
 
 
 # UTILITY TESTS AND FIXTURES
 
 class TestDataFixtures:
-    """Create realistic test data for manual testing."""
+    """Create realistic test data for manual testing with path-based schema."""
     
     @staticmethod
     def create_bird_recording_set(db: HibikidoDatabase):
         """Create a realistic set of bird recording data."""
-        # Recording
-        recording_id = "forest_dawn_001"
+        # Recording with path
+        recording_path = "recordings/field/forest_dawn_001.wav"
         db.add_recording(
-            recording_id=recording_id,
-            path="recordings/field/forest_dawn_001.wav",
+            path=recording_path,
             description="Dawn chorus recorded in oak woodland, spring morning"
         )
         
@@ -593,7 +521,7 @@ class TestDataFixtures:
             description="Hand-segmented individual bird vocalizations"
         )
         
-        # Segments
+        # Segments (normalized 0-1 values)
         segments = [
             {
                 "id": "robin_territorial_001",
@@ -603,13 +531,13 @@ class TestDataFixtures:
             },
             {
                 "id": "blackbird_song_001", 
-                "start": 0.45, "end": 0.95,
+                "start": 0.45, "end": 0.85,
                 "description": "Blackbird melodic song, complex phrases",
                 "embedding_text": "blackbird melodic song complex phrases musical"
             },
             {
                 "id": "wren_trill_001",
-                "start": 1.2, "end": 1.6,
+                "start": 0.90, "end": 1.0,
                 "description": "Wren rapid trill, high frequency",
                 "embedding_text": "wren rapid trill high frequency energetic"
             }
@@ -617,8 +545,7 @@ class TestDataFixtures:
         
         for i, seg in enumerate(segments):
             db.add_segment(
-                segment_id=seg["id"],
-                source_id=recording_id,
+                source_path=recording_path,  # Reference by path
                 segmentation_id=segmentation_id,
                 start=seg["start"],
                 end=seg["end"],
@@ -627,59 +554,49 @@ class TestDataFixtures:
                 faiss_index=1000 + i
             )
         
-        return recording_id, segmentation_id, [s["id"] for s in segments]
+        return recording_path, segmentation_id, [s["id"] for s in segments]
     
     @staticmethod
     def create_granular_effects(db: HibikidoDatabase):
-        """Create realistic granular synthesis effects."""
-        effect_id = "granular_processor_v2"
+        """Create realistic granular synthesis effects with separate presets."""
+        effect_path = "effects/granular/processor_v2.maxpat"
         db.add_effect(
-            effect_id=effect_id,
+            path=effect_path,
             name="Granular Processor",
-            path="/effects/granular/processor_v2.maxpat",
             description="Advanced granular synthesis with pitch and time manipulation"
         )
         
         presets = [
             {
-                "parameters": [
-                    {"name": "grain_size", "value": 0.05},
-                    {"name": "pitch_variation", "value": 0.2},
-                    {"name": "time_stretch", "value": 2.0},
-                    {"name": "density", "value": 0.7}
-                ],
+                "parameters": [0.05, 0.2, 2.0, 0.7],
                 "description": "Ethereal time-stretched texture",
                 "embedding_text": "ethereal time stretched texture atmospheric slow",
-                "FAISS_index": 2000
+                "faiss_index": 2000
             },
             {
-                "parameters": [
-                    {"name": "grain_size", "value": 0.01},
-                    {"name": "pitch_variation", "value": 1.5},
-                    {"name": "time_stretch", "value": 0.5},
-                    {"name": "density", "value": 0.9}
-                ],
+                "parameters": [0.01, 1.5, 0.5, 0.9],
                 "description": "Glitchy fragmented rhythm",
                 "embedding_text": "glitchy fragmented rhythm digital chaotic fast",
-                "FAISS_index": 2001
+                "faiss_index": 2001
             },
             {
-                "parameters": [
-                    {"name": "grain_size", "value": 0.1},
-                    {"name": "pitch_variation", "value": 0.0},
-                    {"name": "time_stretch", "value": 1.0},
-                    {"name": "density", "value": 0.3}
-                ],
+                "parameters": [0.1, 0.0, 1.0, 0.3],
                 "description": "Sparse natural granulation",
                 "embedding_text": "sparse natural granulation organic subtle",
-                "FAISS_index": 2002
+                "faiss_index": 2002
             }
         ]
         
         for preset in presets:
-            db.add_preset_to_effect(effect_id, preset)
+            db.add_preset(
+                effect_path=effect_path,  # Reference by path
+                parameters=preset["parameters"],
+                description=preset["description"],
+                embedding_text=preset["embedding_text"],
+                faiss_index=preset["faiss_index"]
+            )
         
-        return effect_id
+        return effect_path
 
 
 if __name__ == "__main__":
@@ -700,27 +617,42 @@ if __name__ == "__main__":
         print("Creating test data...")
         fixtures = TestDataFixtures()
         
-        recording_id, segmentation_id, segment_ids = fixtures.create_bird_recording_set(db)
-        effect_id = fixtures.create_granular_effects(db)
+        recording_path, segmentation_id, segment_ids = fixtures.create_bird_recording_set(db)
+        effect_path = fixtures.create_granular_effects(db)
         
         # Test retrieval
-        print(f"✅ Created recording: {recording_id}")
+        print(f"✅ Created recording: {recording_path}")
         print(f"✅ Created {len(segment_ids)} segments")
-        print(f"✅ Created effect with presets: {effect_id}")
+        print(f"✅ Created effect with presets: {effect_path}")
         
         # Test stats
         stats = db.get_stats()
         print(f"📊 Database stats: {stats}")
+        
+        # Test path-based lookups
+        recording = db.get_recording_by_path(recording_path)
+        if recording:
+            print(f"✅ Found recording by path: {recording['description']}")
+        
+        effect = db.get_effect_by_path(effect_path)
+        if effect:
+            print(f"✅ Found effect by path: {effect['name']}")
         
         # Test FAISS lookups
         robin_segment = db.get_segment_by_faiss_id(1000)
         if robin_segment:
             print(f"✅ Found segment by FAISS ID: {robin_segment['description']}")
         
-        ethereal_result = db.get_preset_by_faiss_id(2000)
-        if ethereal_result:
-            effect, preset = ethereal_result
-            print(f"✅ Found preset by FAISS ID: {preset['description']}")
+        ethereal_preset = db.get_preset_by_faiss_id(2000)
+        if ethereal_preset:
+            print(f"✅ Found preset by FAISS ID: {ethereal_preset['description']}")
+        
+        # Test relationship queries
+        forest_segments = db.get_segments_by_recording_path(recording_path)
+        print(f"✅ Found {len(forest_segments)} segments for recording")
+        
+        granular_presets = db.get_presets_by_effect_path(effect_path)
+        print(f"✅ Found {len(granular_presets)} presets for effect")
         
         print("\n🎉 All manual tests passed!")
         

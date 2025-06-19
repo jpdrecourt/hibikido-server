@@ -1,137 +1,387 @@
-# Incantation Server
+# Hibikidō (響き道)
 
-A semantic search engine for musical sounds and effects that maps natural language descriptions (incantations) to audio content using neural embeddings. Connect your Max/MSP patches to a smart audio database that understands poetic descriptions.
+_Still air awaits. Quivering breath. A sound, not yet._
 
-## For Musicians & Sound Designers
+Hibikidō (響き道) - the way of resonance - is not a search engine. It is a recognition system. Sounds exist in latency, waiting in the digital wind. We do not create them; we help them remember their names.
 
-### What It Does
+Cast incantations in natural language. Receive coordinates to the sounds that were always there.
 
-Instead of browsing folders or remembering filenames, describe what you want in natural language:
+## For Sound Artists
 
-- _"ethereal forest ambience"_ → finds atmospheric nature recordings
-- _"dark ritualistic drone"_ → locates deep, mysterious sustained tones
-- _"metallic percussion burst"_ → discovers sharp, metallic hits
-- _"warm analog pad"_ → retrieves vintage synthesizer textures
+### The Practice
 
-The server understands semantic relationships, so similar descriptions find related sounds even if the exact words don't match your database.
+In the old way, Kazukorei (風隠霊) - the hidden wind spirit - was not summoned but allowed. The ritual of Yūonshō (幽音章) recognizes what already exists in the spaces between breaths.
 
-### Quick Start for Users
+Hibikidō digitizes this recognition. Your sound library becomes a constellation of latent possibilities. Natural language becomes the sigil that opens gates to specific sounds.
 
-1. **Install & Run** (see setup below)
-2. **Import Your Sounds**: Point the server to a CSV file describing your audio library
-3. **Connect via OSC**: Use any OSC client to send queries and receive sound matches
-4. **Cast Incantations**: Type natural descriptions and get relevant audio back
+### Incantations
 
-### OSC Commands Reference
+Instead of browsing folders or remembering filenames, you speak to the wind:
 
-Send these messages from any OSC client:
+- _"ethereal forest breathing"_ → atmospheric field recordings
+- _"metallic scraping industrial decay"_ → harsh textural sounds
+- _"warm analog pulse nostalgic"_ → vintage synthesizer patterns
+- _"ritualistic drone low frequency"_ → deep sustained tones
 
-#### Core Commands
+The system understands semantic relationships through neural embeddings. Similar intentions find related sounds even when the exact words differ.
+
+### Communication Protocol
+
+Hibikidō speaks OSC (Open Sound Control). Any OSC client becomes an interface for incantation.
+
+#### Core Invocations
+
+Send to the server (default: `127.0.0.1:9000`):
 
 ```
 /search "your incantation here"
-    → Returns: /matches [id, type, title, file, score, id, type, title, file, score, ...]
+→ Returns: /result [index, collection, score, document_data...]
 
-/import_csv "/path/to/your/sounds.csv"
-    → Bulk import your sound library
+/add_recording "sounds/wind/forest_01.wav" '{"description":"morning wind through oak trees"}'
+→ Add new recording and auto-create full-length segment (0.0-1.0)
+
+/add_effect "effects/reverb/cathedral.dll" '{"description":"gothic cathedral reverb"}'
+→ Add new effect and auto-create default preset
+
+/add_segment "wind gusts" '{"source_path":"sounds/wind/forest_01.wav", "start":0.1, "end":0.6, "segmentation_id":"manual"}'
+→ Add new segment with timing and metadata
+
+/add_preset "warm cathedral ambience" '{"effect_path":"effects/reverb/cathedral.dll", "parameters":[0.8, 0.3, 0.9]}'
+→ Add new effect preset with parameters
+
+/rebuild_index
+→ Regenerate all embeddings from database (use after bulk changes)
 
 /stats
-    → Returns: /stats_result [total, active, deleted, with_embeddings]
-```
+→ Returns: /stats_result [recordings, segments, effects, presets, total_searchable]
 
-#### Database Management
-
-```
-/add "description" "{\"file\":\"path.wav\", \"type\":\"sample\"}"
-    → Add single entry with optional metadata JSON
-
-/get_by_id 42
-    → Get specific entry by ID
-
-/soft_delete 42
-    → Mark entry as deleted (preserves for undo)
-```
-
-#### System Control
-
-```
 /stop
-    → Graceful server shutdown
+→ Graceful shutdown
 ```
 
-### CSV Import Format
+#### Response Patterns
 
-Your sound library CSV can have any columns, but these are recommended:
+The server responds on `127.0.0.1:9001`:
 
-| Required | Column      | Description          | Example                               |
-| -------- | ----------- | -------------------- | ------------------------------------- |
-| ✓        | ID          | Unique number        | 1, 2, 3...                            |
-| ✓        | File        | Audio file path      | "drums/kick_01.wav"                   |
-|          | Title       | Human-readable name  | "Deep Kick Drum"                      |
-|          | Description | Detailed description | "Punchy 808-style kick with sub bass" |
-|          | Type        | Category             | "drum", "effect", "loop"              |
-|          | Duration    | Length in seconds    | 2.5                                   |
-|          | Location    | Recording location   | "Studio A"                            |
-|          | Gear        | Equipment used       | "Neumann U87, SSL Console"            |
+**Search Results** (`/result`):
 
-**The server is completely schemaless** - add any columns you want. They'll be stored and searchable.
-
-### Response Format
-
-**Search Results** (`/matches`):
-Flat array of: `[id1, type1, title1, file1, score1, id2, type2, title2, file2, score2, ...]`
-
-- **id**: Database ID number
-- **type**: Content category
-- **title**: Display name
-- **file**: Audio file path
-- **score**: Similarity score (0.0-1.0, higher = better match)
+- `index`: Result position
+- `collection`: "segments" or "presets"
+- `score`: Similarity (0.0-1.0, higher = stronger resonance)
+- `path`: File path for the audio/effect
+- `description`: Human-readable description from embedding text
+- `start`: Start position (0.0-1.0, normalized, 0.0 for presets)
+- `end`: End position (0.0-1.0, normalized, 0.0 for presets)
+- `parameters`: Effect parameters (presets only, empty array for segments)
 
 **Status Messages**:
 
-- `/confirm "message"` - Success notifications
-- `/error "message"` - Error descriptions
-- `/stats_result [total, active, deleted, with_embeddings]` - Database stats
+- `/confirm "message"` - Acknowledgments
+- `/error "message"` - When incantations fail
+- `/search_complete count` - End of results
 
-### Tips for Better Results
+### The Database of Latent Sounds
 
-1. **Rich Descriptions**: Include mood, texture, instrument, genre
+Hibikidō organizes sound through hierarchical relationships:
 
-   - Good: _"bright acoustic guitar strumming folk style"_
-   - Basic: _"guitar"_
+- **Recordings**: Source audio files, the raw captured wind
+- **Segments**: Timestamped slices within recordings
+- **Effects**: Audio processing tools with semantic presets
+- **Performances**: Sessions logs of invocations over time
 
-2. **Consistent Terminology**: Use similar words across your database
-
-   - _"percussion"_ vs _"drums"_ vs _"beats"_
-
-3. **Semantic Variety**: The AI understands synonyms and related concepts
-
-   - _"ethereal"_ matches _"atmospheric"_, _"spacious"_, _"ambient"_
-
-4. **Multi-word Queries**: Longer descriptions often yield better results
-   - _"dark industrial metal scraping"_ is more specific than _"metal"_
+Each segment and effect preset exists as a point in semantic space, findable through language that describes its essence rather than its filename.
 
 ---
 
-## For Developers
+## For Artist-Programmers
 
-### Architecture Overview
+### System Architecture
+
+Hibikidō implements a neural semantic search over a hierarchical audio database. The core loop: natural language → embedding vector → similarity search → MongoDB document retrieval.
+
+```mermaid
+graph TD
+    A[OSC Incantation] --> B[main_server.py]
+    B --> C[text_processor.py]
+    C --> D[embedding_manager.py]
+    D --> E[FAISS Vector Search]
+    E --> F[database_manager.py]
+    F --> G[MongoDB Query]
+    G --> H[OSC Response]
+
+    style A fill:#e1f5fe,stroke:#01579b,color:#000
+    style B fill:#f3e5f5,stroke:#4a148c,color:#000
+    style C fill:#f3e5f5,stroke:#4a148c,color:#000
+    style D fill:#f3e5f5,stroke:#4a148c,color:#000
+    style E fill:#ffebee,stroke:#c62828,color:#000
+    style F fill:#f3e5f5,stroke:#4a148c,color:#000
+    style G fill:#e0f2f1,stroke:#2e7d32,color:#000
+    style H fill:#e1f5fe,stroke:#01579b,color:#000
+```
+
+### Database Schema
+
+MongoDB collections with semantic indexing:
+
+```mermaid
+erDiagram
+    RECORDINGS ||--o{ SEGMENTS : "referenced by path"
+    SEGMENTATIONS ||--o{ SEGMENTS : produces
+    EFFECTS ||--o{ PRESETS : "referenced by path"
+    PERFORMANCES ||--o{ INVOCATIONS : logs
+
+    RECORDINGS {
+        string _id
+        string path "unique, artist-facing identifier"
+        string description
+        datetime created_at
+    }
+
+    SEGMENTS {
+        string _id
+        string source_path "references recordings.path"
+        string segmentation_id FK
+        float start
+        float end
+        string description
+        string embedding_text
+        int FAISS_index
+        datetime created_at
+    }
+
+    EFFECTS {
+        string _id
+        string path "unique, artist-facing identifier"
+        string name
+        string description
+        datetime created_at
+    }
+
+    PRESETS {
+        string _id
+        string effect_path "references effects.path"
+        array parameters
+        string description
+        string embedding_text
+        int FAISS_index
+        datetime created_at
+    }
+```
+
+### Component Architecture
+
+```mermaid
+graph LR
+    subgraph "Core Engine"
+        A[main_server.py<br/>Orchestration]
+        B[osc_handler.py<br/>Protocol Layer]
+    end
+
+    subgraph "Semantic Layer"
+        C[text_processor.py<br/>Language Processing]
+        D[embedding_manager.py<br/>Neural Vectors]
+    end
+
+    subgraph "Persistence Layer"
+        E[database_manager.py<br/>MongoDB Interface]
+    end
+
+    subgraph "External"
+        F[MongoDB<br/>Document Store]
+        G[FAISS<br/>Vector Index]
+        H[OSC Client<br/>Incantation Interface]
+    end
+
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+    D --> G
+    E --> F
+    B --> H
+
+    style A fill:#e1f5fe,stroke:#01579b,color:#000
+    style B fill:#f3e5f5,stroke:#4a148c,color:#000
+    style C fill:#f3e5f5,stroke:#4a148c,color:#000
+    style D fill:#ffebee,stroke:#c62828,color:#000
+    style E fill:#e0f2f1,stroke:#2e7d32,color:#000
+    style F fill:#e0f2f1,stroke:#2e7d32,color:#000
+    style G fill:#ffebee,stroke:#c62828,color:#000
+    style H fill:#e1f5fe,stroke:#01579b,color:#000
+```
+
+### Data Flow Deep Dive
+
+#### Semantic Processing Pipeline
+
+```mermaid
+sequenceDiagram
+    participant OSC as OSC Client
+    participant MS as main_server
+    participant TP as text_processor
+    participant EM as embedding_manager
+    participant DM as database_manager
+    participant Mongo as MongoDB
+    participant FAISS as FAISS Index
+
+    OSC->>MS: /search "ethereal wind"
+    MS->>TP: enhance_query()
+    TP->>MS: cleaned keywords
+    MS->>EM: search(query, top_k, db_manager)
+    EM->>EM: encode query → vector
+    EM->>FAISS: similarity search
+    FAISS->>EM: [indices, scores]
+
+    loop For each result
+        EM->>DM: find by FAISS_index
+        DM->>Mongo: query segments/presets
+        Mongo->>DM: document
+        DM->>EM: document
+    end
+
+    EM->>MS: results with documents
+    MS->>OSC: /result messages
+```
+
+#### Hierarchical Context Generation
+
+The `text_processor.py` creates embedding text using hierarchical context:
+
+**For Segments**: `segment.description + segmentation.description + recording.description`  
+**For Presets**: `preset.description + effect.description`
+
+Priority flows from specific (segment/preset) to general (recording/effect), with word limits ensuring focused embeddings. Target: 15 words, hard limit: 20 words.
+
+**Auto-Creation Features**:
+
+- New recordings automatically get full-length segments (0.0-1.0)
+- New effects automatically get default presets with empty parameters
+- All items receive immediate FAISS embeddings for searchability
+- MongoDB auto-generates unique ObjectIds (no manual ID management)
+
+### Key Components Explained
+
+#### main_server.py - The Orchestrator
+
+Central command that:
+
+- Manages component lifecycle
+- Routes OSC messages to handlers
+- Coordinates search operations
+- Handles graceful shutdown
+
+**Key Methods**:
+
+- `_handle_search()`: Main incantation processor
+- `_handle_add_recording()`: Creates new source files with auto-segment
+- `_handle_add_effect()`: Creates new effects with default preset
+- `_handle_add_segment()`: Creates new timestamped audio slices with normalized timing
+- `_handle_add_preset()`: Creates new effect configurations
+- `_send_search_results()`: Formats simplified, uniform results for OSC
+- `_create_display_description()`: Converts embedding text to human-readable descriptions
+- `_register_osc_handlers()`: Maps OSC addresses to methods
+
+#### embedding_manager.py - Neural Recognition
+
+Transforms language into semantic vectors using `sentence-transformers`.
+
+**Configuration**:
+
+- Model: `all-MiniLM-L6-v2` (384-dimensional embeddings)
+- Index: FAISS `IndexFlatIP` with cosine similarity
+- Storage: Persistent `.index` file with auto-save
+
+**Key Methods**:
+
+- `add_embedding(text)`: Text → normalized vector → FAISS storage
+- `search(query, top_k, db_manager)`: Query → similar vectors → MongoDB lookups
+- `rebuild_from_database()`: Regenerate entire index from MongoDB with hierarchical context
+
+#### database_manager.py - Hierarchical Storage
+
+MongoDB interface implementing the full schema hierarchy.
+
+**Collections**:
+
+- `recordings`: Source audio files, indexed by path (unique)
+- `segments`: Timestamped slices with embeddings, reference recordings by path with normalized 0-1 timing
+- `effects`: Processing tools, indexed by path (unique)
+- `presets`: Effect configurations with embeddings, reference effects by path (separate collection)
+- `performances`: Session logs
+- `segmentations`: Batch processing metadata
+
+**Search Integration**:
+
+- `get_segment_by_faiss_id()`: Vector → segment document
+- `get_preset_by_faiss_id()`: Vector → preset document
+- Path-based lookups for human-readable references
+- Maintains FAISS index references in documents
+- MongoDB auto-generates unique ObjectIds for all documents
+
+#### text_processor.py - Language Purification
+
+Converts raw descriptions into optimized embedding text.
+
+**Hierarchical Processing**:
+
+```python
+# Segment context (15 words max)
+segment_text = combine_contexts([
+    (segment.description, 10),      # Local context
+    (segmentation.description, 5),  # Method context
+    (recording.description, 5)      # Source context
+])
+```
+
+**Enhancement Pipeline**:
+
+1. spaCy processing (if available) or simple tokenization
+2. Stop word removal (including audio-specific terms)
+3. Lemmatization for semantic consistency
+4. Word limit enforcement with priority ordering
+
+#### osc_handler.py - Protocol Layer
+
+OSC communication with message parsing and routing.
+
+**Message Flow**:
 
 ```
-Max/MSP ←→ OSC ←→ main_server.py ←→ MongoDB + FAISS Vector DB
-                        ↓
-            [database_manager, embedding_manager, text_processor, csv_importer]
+OSC bytes → parse_args() → dispatcher → handler method → format response → OSC output
 ```
 
-### Core Components
+**Response Formatting**:
 
-```
-main_server.py          # Central orchestrator, OSC command routing
-├── database_manager.py  # MongoDB operations, schemaless storage
-├── embedding_manager.py # FAISS vector search, sentence transformers
-├── text_processor.py   # Text cleaning, semantic enhancement
-├── csv_importer.py     # Bulk import with intelligent updates
-└── osc_handler.py      # OSC protocol implementation
+- Handles complex data serialization for OSC
+- Manages client connection state
+- Provides error reporting and status updates
+
+### Development Patterns
+
+#### Adding New Search Types
+
+1. Extend database schema in `database_manager.py`
+2. Add embedding generation in `text_processor.py`
+3. Update search logic in `embedding_manager.py`
+4. Add OSC handlers in `main_server.py`
+
+#### Extending Text Processing
+
+The `TextProcessor` uses hierarchical context generation. To modify:
+
+1. Update `create_segment_embedding_text()` or `create_preset_embedding_text()`
+2. Adjust word limits and priority ordering
+3. Test with `rebuild_from_database()` to regenerate embeddings
+
+#### Custom OSC Commands
+
+Register new handlers in `main_server._register_osc_handlers()`:
+
+```python
+def _handle_custom_command(self, unused_addr: str, *args):
+    parsed = self.osc_handler.parse_args(*args)
+    # Your logic here
+    self.osc_handler.send_confirm("custom response")
 ```
 
 ### Installation & Setup
@@ -141,190 +391,47 @@ main_server.py          # Central orchestrator, OSC command routing
 ```bash
 pip install sentence-transformers python-osc faiss-cpu torch pymongo pandas
 
-# Optional for enhanced text processing:
+# Optional enhanced text processing:
 pip install spacy
 python -m spacy download en_core_web_sm
 ```
 
-#### MongoDB Setup
+#### Database Setup
 
-Install MongoDB Community Server and ensure it's running:
+Install and run MongoDB:
 
 ```bash
 # Default connection: mongodb://localhost:27017
 mongod
 ```
 
-#### Launch Server
+#### Launch Sequence
 
 ```bash
-python main_server.py [--config config.json] [--log-level DEBUG]
+python -m hibikido.main_server [--config config.json] [--log-level DEBUG]
 ```
 
-### Data Pipeline
+The server will:
 
-#### Import Flow
-
-```
-CSV File → csv_importer.py → text_processor.py → embedding_manager.py → database_manager.py
-     ↓              ↓                 ↓                    ↓                    ↓
-Field Extract → Text Clean → Sentence Embed → FAISS Index → MongoDB Store
-```
-
-#### Add Entry Flow
-
-```
-OSC /add → main_server.py → text_processor.py → embedding_manager.py → database_manager.py
-    ↓            ↓                   ↓                    ↓                    ↓
-Parse Args → Create Entry → Generate Embed → FAISS Index → MongoDB Store
-```
-
-#### Search Flow
-
-```
-User Query → text_processor.py → embedding_manager.py → database_manager.py → OSC Response
-      ↓             ↓                      ↓                     ↓                ↓
-   Enhance → Create Vector → FAISS Search → Lookup Metadata → Format Results
-```
-
-### Database Schema
-
-**Core System Fields** (required):
-
-```javascript
-{
-  "_id": ObjectId("..."),
-  "ID": 42,                          // Unique identifier
-  "embedding_text": "processed text for semantic search",
-  "faiss_id": 156,                   // Vector database index
-  "created_at": ISODate("..."),
-  "deleted": false
-}
-```
-
-**User Data Fields** (completely flexible):
-
-```javascript
-{
-  // Any CSV columns stored as-is
-  "title": "Steel Ball On Marble",
-  "description": "Bouncing a small steel ball on marble surface",
-  "file": "percussion/steel_ball_01.wav",
-  "type": "foley",
-  "duration": 12.5,
-  "location": "Studio A",
-  "gear": "Zoom H6, AKG C414",
-  "mood": "playful",
-  "bpm": 120,
-  // ... literally any other fields
-}
-```
-
-### Key Design Principles
-
-1. **Schemaless Storage**: Only 5 core fields required, everything else flexible
-2. **Soft Deletes**: Entries marked deleted, never physically removed
-3. **Update-Safe Imports**: Re-importing updates metadata but preserves embeddings
-4. **Semantic Text Processing**: Intelligent text cleaning and enhancement
-5. **Vector Similarity**: FAISS for fast, accurate semantic search
-
-### Component Deep Dive
-
-#### text_processor.py
-
-**Purpose**: Converts raw CSV data into optimized embedding text.
-
-**Key Methods**:
-
-- `create_embedding_sentence()`: Combines title + description + filename intelligently
-- `enhance_query()`: Improves user queries with spaCy processing
-- `_clean_text()`: Normalizes text (removes special chars, lowercases, etc.)
-
-**Text Processing Pipeline**:
-
-```
-Raw CSV → Extract Fields → Clean Text → spaCy Enhancement → Embedding Ready
-```
-
-#### embedding_manager.py
-
-**Purpose**: Neural embeddings and vector similarity search.
-
-**Configuration**:
-
-- Model: `all-MiniLM-L6-v2` (384-dim embeddings)
-- Index: FAISS `IndexFlatIP` with cosine similarity
-- Storage: Persistent index file with auto-save
-
-**Key Methods**:
-
-- `encode_text()`: Text → normalized embedding vector
-- `add_embedding()`: Store vector with duplicate detection
-- `search()`: Query → ranked similarity results
-
-#### database_manager.py
-
-**Purpose**: MongoDB interface with flexible schema handling.
-
-**Indexing Strategy**:
-
-```python
-# Performance indexes
-collection.create_index("faiss_id", unique=True)
-collection.create_index("ID", unique=True)
-collection.create_index("deleted")
-collection.create_index([("title", "text"), ("description", "text")])
-```
-
-**Key Methods**:
-
-- `add_entry()`: Validates core fields, stores complete document
-- `get_by_faiss_id()`: Retrieval for search results
-- `soft_delete()`: Safe deletion with undo capability
-
-#### csv_importer.py
-
-**Purpose**: Intelligent bulk import with update handling.
-
-**Import Logic**:
-
-1. Validate CSV structure and required fields
-2. For each row: extract ALL fields (completely schemaless)
-3. Check if entry exists by ID
-4. **Update existing**: Preserve embeddings, update metadata
-5. **Add new**: Full processing with embedding generation
-
-#### osc_handler.py
-
-**Purpose**: OSC protocol implementation.
-
-**Message Flow**:
-
-```
-OSC Input → parse_args() → Dispatcher → Handler Method → Format Response → OSC Output
-```
-
-**Response Types**:
-
-- `/matches`: Search results as flat array
-- `/confirm`: Status messages
-- `/error`: Error descriptions
-- `/stats_result`: Database analytics
+1. Connect to MongoDB and initialize collections
+2. Load the sentence transformer model
+3. Initialize or load the FAISS index
+4. Start OSC server and register handlers
+5. Send ready signal via OSC
 
 ### Configuration
 
-Create `config.json` to override defaults:
+Override defaults with `config.json`:
 
 ```json
 {
   "mongodb": {
     "uri": "mongodb://localhost:27017",
-    "database": "incantations",
-    "collection": "entries"
+    "database": "hibikido"
   },
   "embedding": {
     "model_name": "all-MiniLM-L6-v2",
-    "index_file": "incantations.index"
+    "index_file": "hibikido.index"
   },
   "osc": {
     "listen_ip": "127.0.0.1",
@@ -341,72 +448,29 @@ Create `config.json` to override defaults:
 
 ### Performance Characteristics
 
-- **Search Speed**: ~1-15ms depending on database size
-- **Embedding Generation**: ~10-50ms per entry
-- **Bulk Import**: ~20-100 entries/second
-- **Memory Usage**: ~100MB for model + index
-- **Scalability**: Tested up to 100K entries
+- **Embedding Generation**: ~10-50ms per text
+- **Search Latency**: ~1-15ms depending on index size
+- **Memory Usage**: ~100MB base + index size
+- **Scalability**: Tested to 100K+ segments/presets
+- **Database**: MongoDB with automatic ObjectId generation
+- **Timing**: All segments use normalized 0-1 values (duration-agnostic)
 
-### Development Workflow
+### Debugging The Recognition
 
-#### Adding New OSC Commands
+**Enable verbose logging**:
 
-1. Add handler method in `main_server.py`
-2. Register in `_register_osc_handlers()`
-3. Add OSC address to `osc_handler.py`
+```bash
+python -m hibikido.main_server --log-level DEBUG
+```
 
-#### Extending Text Processing
+**Inspect embeddings**: Check the `embedding_text` field in MongoDB documents to understand what the neural network actually sees.
 
-1. Modify `TextProcessor` methods in `text_processor.py`
-2. Update `create_embedding_sentence()` logic
-3. Test with sample CSV data
+**Monitor vector quality**: Use `/stats` to verify embeddings are being created, and examine FAISS index file size.
 
-#### Database Schema Extensions
-
-1. Update validation in `database_manager.py`
-2. Add indexes for performance
-3. Create migration scripts if needed
-
-### Testing Strategy
-
-**Unit Tests**: Individual component methods, edge cases
-**Integration Tests**: Full import/search workflows  
-**Performance Tests**: Large datasets, concurrent requests
-
-### Debugging Tips
-
-1. **Enable DEBUG logging**: `--log-level DEBUG`
-2. **Check embedding quality**: Examine `embedding_text` field in MongoDB
-3. **Validate CSV structure**: Use `/import_csv` validation
-4. **Monitor FAISS index**: Check `incantations.index` file size
-5. **OSC debugging**: Use tools like `oscdump` to monitor traffic
+**OSC debugging**: Tools like `oscdump` can monitor message traffic.
 
 ---
 
-## Troubleshooting
+_Each line must be made in one breath, and the full sigil drawn in silence._
 
-### Common Issues
-
-**No search results**:
-
-- Check if embeddings were created (`/stats` should show entries with embeddings)
-- Verify `embedding_text` field in database entries
-- Try broader/simpler queries
-
-**Import failures**:
-
-- Ensure CSV has `ID` column with unique integers
-- Check file encoding (UTF-8 recommended)
-- Verify MongoDB connection
-
-**OSC connectivity**:
-
-- Confirm ports 9000/9001 are available
-- Check firewall settings
-- Test with simple OSC tools first
-
-**Performance issues**:
-
-- Monitor MongoDB indexes with `.explain()`
-- Check FAISS index size vs. available memory
-- Consider model size vs. accuracy tradeoffs
+![Hibikidō Sigil](./assets/hibikido-sigil.png)
