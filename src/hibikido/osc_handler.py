@@ -1,8 +1,9 @@
 """
-OSC Handler for Hibikidō Server
-===============================
+OSC Handler for Hibikidō Server (Updated for Invocation Protocol)
+================================================================
 
-Handles all OSC communication and message routing.
+Handles all OSC communication using the new invocation paradigm.
+/invoke → /manifest (no completion signals)
 """
 
 import json
@@ -26,10 +27,10 @@ class OSCHandler:
         self.server = None
         self.dispatcher = None
         
-        # OSC Address definitions
+        # OSC Address definitions (updated for invocation protocol)
         self.addresses = {
             # Input addresses
-            'search': '/search',
+            'invoke': '/invoke',  # Changed from 'search'
             'add_recording': '/add_recording',
             'add_effect': '/add_effect', 
             'add_segment': '/add_segment',
@@ -39,11 +40,11 @@ class OSCHandler:
             'stop': '/stop',
             
             # Output addresses
-            'result': '/result',
-            'search_complete': '/search_complete',
+            'manifest': '/manifest',  # Changed from 'result'
             'confirm': '/confirm',
             'stats_result': '/stats_result',
             'error': '/error'
+            # Removed 'search_complete'
         }
     
     def initialize(self) -> bool:
@@ -87,6 +88,18 @@ class OSCHandler:
             logger.error(f"Hibikidō OSC: Failed to start server: {e}")
             return None
     
+    def send_manifest(self, index: int, collection: str, score: float, 
+                     path: str, description: str, start: float, end: float, 
+                     parameters: str = "[]"):
+        """Send manifestation message (replaces send_result)."""
+        try:
+            self.client.send_message(self.addresses['manifest'], [
+                index, collection, score, path, description, start, end, parameters
+            ])
+            logger.debug(f"Hibikidō OSC: Sent manifestation: {description}")
+        except Exception as e:
+            logger.error(f"Hibikidō OSC: Failed to send manifestation: {e}")
+    
     def send_confirm(self, message: str):
         """Send confirmation message."""
         try:
@@ -96,10 +109,10 @@ class OSCHandler:
             logger.error(f"Hibikidō OSC: Failed to send confirmation: {e}")
     
     def send_error(self, error_message: str):
-        """Send error message."""
+        """Send error message (lightweight for performance)."""
         try:
             self.client.send_message(self.addresses['error'], error_message)
-            logger.error(f"Hibikidō OSC: Sent error: {error_message}")
+            logger.warning(f"Hibikidō OSC: Sent error: {error_message}")
         except Exception as e:
             logger.error(f"Hibikidō OSC: Failed to send error message: {e}")
     

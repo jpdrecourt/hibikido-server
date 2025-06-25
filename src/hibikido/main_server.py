@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
 """
-Hibikidō Server - Main Application
-==================================
+Hibikidō Server - Main Application (Invocation Protocol)
+========================================================
 
-Music server that maps text descriptions to sounds and effects using semantic search.
-Supports hierarchical database with recordings, segments, effects, and performances.
-
-Usage:
-    python main_server.py [--config config.json]
-
-Dependencies:
-    pip install sentence-transformers python-osc faiss-cpu torch pymongo
+Music server using invocation paradigm - sounds manifest when the cosmos permits.
+All search results queue through orchestrator, no completion signals.
 """
 
 import signal
@@ -18,6 +12,8 @@ import sys
 import json
 import argparse
 import logging
+import threading
+import time
 from typing import Dict, Any, List
 from datetime import datetime
 
@@ -25,6 +21,7 @@ from .database_manager import HibikidoDatabase
 from .embedding_manager import EmbeddingManager
 from .text_processor import TextProcessor
 from .osc_handler import OSCHandler
+from .orchestrator import Orchestrator
 
 # Configure logging
 logging.basicConfig(
@@ -57,7 +54,14 @@ class HibikidoServer:
             send_port=self.config['osc']['send_port']
         )
         
+        # Initialize orchestrator
+        self.orchestrator = Orchestrator(
+            overlap_threshold=self.config['orchestrator']['overlap_threshold'],
+            time_precision=self.config['orchestrator']['time_precision']
+        )
+        
         self.is_running = False
+        self.update_thread = None
     
     def _default_config(self) -> Dict[str, Any]:
         """Default configuration settings."""
@@ -79,6 +83,10 @@ class HibikidoServer:
             'search': {
                 'top_k': 10,
                 'min_score': 0.3
+            },
+            'orchestrator': {
+                'overlap_threshold': 0.2,  # 20%
+                'time_precision': 0.1      # 100ms
             }
         }
     
@@ -88,29 +96,32 @@ class HibikidoServer:
         
         # Initialize database
         if not self.db_manager.connect():
-            logger.error("Hibikidō Server: Failed to connect to database")
+            logger.error("Failed to connect to database")
             return False
         
         # Initialize embedding system
         if not self.embedding_manager.initialize():
-            logger.error("Hibikidō Server: Failed to initialize embedding system")
+            logger.error("Failed to initialize embedding system")
             return False
         
         # Initialize OSC
         if not self.osc_handler.initialize():
-            logger.error("Hibikidō Server: Failed to initialize OSC")
+            logger.error("Failed to initialize OSC")
             return False
+        
+        # Setup orchestrator callback
+        self.orchestrator.set_manifest_callback(self.osc_handler.send_manifest)
         
         # Register OSC handlers
         self._register_osc_handlers()
         
-        logger.info("Hibikidō Server: All components initialized successfully")
+        logger.info("All components initialized successfully")
         return True
     
     def _register_osc_handlers(self):
         """Register OSC message handlers."""
         handlers = {
-            'search': self._handle_search,
+            'invoke': self._handle_invoke,  # Changed from 'search'
             'add_recording': self._handle_add_recording,
             'add_effect': self._handle_add_effect,
             'add_segment': self._handle_add_segment,
@@ -131,10 +142,13 @@ class HibikidoServer:
             signal.signal(signal.SIGINT, self._shutdown_handler)
             signal.signal(signal.SIGTERM, self._shutdown_handler)
             
+            # Start orchestrator update thread
+            self._start_orchestrator_updates()
+            
             # Start OSC server
             server = self.osc_handler.start_server()
             if not server:
-                logger.error("Hibikidō Server: Failed to start OSC server")
+                logger.error("Failed to start OSC server")
                 return
             
             self.is_running = True
@@ -146,17 +160,32 @@ class HibikidoServer:
             self._print_banner()
             
             # Start serving
-            logger.info("Hibikidō Server: Ready - waiting for OSC messages...")
+            logger.info("Ready - waiting for invocations...")
             server.serve_forever()
             
         except Exception as e:
-            logger.error(f"Hibikidō Server error: {e}")
+            logger.error(f"Server error: {e}")
             self.shutdown()
+    
+    def _start_orchestrator_updates(self):
+        """Start background thread for orchestrator updates."""
+        def update_loop():
+            while self.is_running:
+                try:
+                    self.orchestrator.update()
+                    time.sleep(self.config['orchestrator']['time_precision'])
+                except Exception as e:
+                    logger.error(f"Orchestrator update error: {e}")
+        
+        self.update_thread = threading.Thread(target=update_loop, daemon=True)
+        self.update_thread.start()
+        logger.info("Orchestrator update thread started")
     
     def _print_banner(self):
         """Print startup banner with information."""
         config = self.config
         stats = self.db_manager.get_stats()
+        orch_stats = self.orchestrator.get_stats()
         
         print("\n" + "="*70)
         print("🎵 HIBIKIDŌ SERVER READY 🎵")
@@ -165,100 +194,166 @@ class HibikidoServer:
               f"{stats.get('presets', 0)} presets, "
               f"{stats.get('total_searchable_items', 0)} searchable")
         print(f"FAISS Index: {self.embedding_manager.get_total_embeddings()} embeddings")
+        print(f"Orchestrator: {orch_stats['overlap_threshold']*100:.0f}% overlap threshold, "
+              f"{orch_stats['time_precision']*1000:.0f}ms precision")
         print(f"Listening: {config['osc']['listen_ip']}:{config['osc']['listen_port']}")
         print(f"Sending: {config['osc']['send_ip']}:{config['osc']['send_port']}")
         print("\nOSC Commands:")
-        print("  /search \"query text\"           - semantic search across segments and presets")
+        print("  /invoke \"incantation\"           - semantic invocation → manifestations")
         print("  /add_recording \"path\" metadata  - add new recording with auto-segment")
         print("  /add_effect \"path\" metadata     - add new effect with default preset")
         print("  /add_segment \"text\" metadata    - add new segment")
         print("  /add_preset \"text\" metadata     - add new effect preset")
         print("  /rebuild_index                   - rebuild FAISS index from database")
-        print("  /stats                           - database statistics")
+        print("  /stats                           - database and orchestrator statistics")
         print("  /stop                            - shutdown server")
         print("="*70)
         print()
     
     # OSC Message Handlers
     
-    def _handle_search(self, unused_addr: str, *args):
-        """Handle search requests - returns full MongoDB documents."""
+    def _handle_invoke(self, unused_addr: str, *args):
+        """Handle invocation requests - queue all results for manifestation."""
         try:
             parsed = self.osc_handler.parse_args(*args)
-            query = parsed.get('arg1', '').strip()
+            incantation = parsed.get('arg1', '').strip()
             
-            if not query:
-                self.osc_handler.send_error("search requires query text")
+            if not incantation:
+                self.osc_handler.send_error("invoke requires incantation text")
                 return
             
-            logger.info(f"Hibikidō Server: Search query: '{query}'")
+            logger.info(f"Invocation: '{incantation}'")
             
             # Search with MongoDB lookups
             results = self.embedding_manager.search(
-                query, 
+                incantation, 
                 self.config['search']['top_k'],
                 db_manager=self.db_manager
             )
             
             if not results:
-                self.osc_handler.send_confirm("no matches found")
+                self.osc_handler.send_confirm("no resonance found")
                 return
             
-            # Send full documents via OSC
-            self._send_search_results(results)
-            logger.info(f"Hibikidō Server: Search '{query}' returned {len(results)} results")
+            # Filter to segments only (MVP requirement)
+            segment_results = [r for r in results if r["collection"] == "segments"]
+            
+            if not segment_results:
+                self.osc_handler.send_confirm("no segment resonance found")
+                return
+            
+            # Queue ALL results for orchestrator processing
+            queued_count = 0
+            for i, result in enumerate(segment_results):
+                document = result["document"]
+                
+                # Extract metadata for orchestrator
+                freq_low = document.get("freq_low", 200)
+                freq_high = document.get("freq_high", 2000)
+                duration = document.get("duration", 1.0)
+                sound_id = str(document.get("_id", "unknown"))
+                
+                # Prepare manifestation data
+                manifestation_data = {
+                    "index": i,
+                    "collection": "segments",
+                    "score": float(result["score"]),
+                    "path": str(document.get("source_path", "")),
+                    "description": self._create_display_description(
+                        document.get("embedding_text", "")
+                    ),
+                    "start": float(document.get("start", 0.0)),
+                    "end": float(document.get("end", 1.0)),
+                    "parameters": "[]",  # Empty for segments
+                    "sound_id": sound_id,
+                    "freq_low": freq_low,
+                    "freq_high": freq_high,
+                    "duration": duration
+                }
+                
+                # Queue for orchestrator (no immediate manifestation)
+                if self.orchestrator.queue_manifestation(manifestation_data):
+                    queued_count += 1
+            
+            # Simple confirmation - no completion signal
+            self.osc_handler.send_confirm(f"invoked: {queued_count} resonances queued")
+            logger.info(f"Invocation '{incantation}' queued {queued_count} manifestations")
             
         except Exception as e:
-            error_msg = f"search failed: {e}"
-            logger.error(f"Hibikidō Server: {error_msg}")
+            error_msg = f"invocation failed: {e}"
+            logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
     
-    def _send_search_results(self, results: List[Dict[str, Any]]):
-        """Send search results as simplified, uniform data via OSC."""
+    def _create_display_description(self, embedding_text: str) -> str:
+        """Create human-readable description from embedding text."""
         try:
-            # Send each result as separate OSC message with uniform format
-            for i, result in enumerate(results):
-                collection = result["collection"]
-                document = result["document"]
-                score = result["score"]
-                
-                # Extract common fields
-                if collection == "segments":
-                    path = document.get("source_path", "")
-                    start = document.get("start", 0.0)
-                    end = document.get("end", 1.0)
-                    parameters = []  # Empty for segments
-                else:  # presets
-                    path = document.get("effect_path", "")
-                    start = 0.0  # Default for presets
-                    end = 0.0    # Default for presets  
-                    parameters = document.get("parameters", [])
-                
-                # Create description from embedding text using reverse processing
-                embedding_text = document.get("embedding_text", "")
-                description = self._create_display_description(embedding_text)
-                
-                # Send uniform result format
-                self.osc_handler.client.send_message("/result", [
-                    i,                    # Result index
-                    collection,           # "segments" or "presets"
-                    float(score),         # Similarity score
-                    str(path),           # File path
-                    str(description),    # Human-readable description
-                    float(start),        # Start time (0.0 for presets)
-                    float(end),          # End time (0.0 for presets)
-                    str(json.dumps(parameters))  # Parameters as JSON string ([] for segments)
-                ])
+            if not embedding_text:
+                return "untitled"
             
-            # Send completion message
-            self.osc_handler.client.send_message("/search_complete", len(results))
+            # Simple processing for performance
+            words = embedding_text.split()
+            
+            # Take first few meaningful words
+            meaningful_words = []
+            for word in words[:8]:
+                word = word.strip().lower()
+                if len(word) > 2 and word not in ['the', 'and', 'for', 'with']:
+                    meaningful_words.append(word)
+                if len(meaningful_words) >= 4:
+                    break
+            
+            if meaningful_words:
+                description = " ".join(meaningful_words[:4])
+                # Capitalize first word
+                if description:
+                    description = description[0].upper() + description[1:]
+                return description[:50]
+            
+            return embedding_text[:30].strip() or "untitled"
             
         except Exception as e:
-            logger.error(f"Hibikidō Server: Failed to send search results: {e}")
-            self.osc_handler.send_error(f"failed to send results: {e}")
+            logger.warning(f"Failed to create display description: {e}")
+            return "untitled"
     
+    def _handle_stats(self, unused_addr: str, *args):
+        """Handle stats requests (includes orchestrator)."""
+        try:
+            stats = self.db_manager.get_stats()
+            embedding_count = self.embedding_manager.get_total_embeddings()
+            orch_stats = self.orchestrator.get_stats()
+            
+            # Send detailed stats
+            stats_msg = (f"Database: {stats.get('recordings', 0)} recordings, "
+                        f"{stats.get('segments', 0)} segments, "
+                        f"{stats.get('effects', 0)} effects, "
+                        f"{stats.get('presets', 0)} presets. "
+                        f"FAISS: {embedding_count} embeddings. "
+                        f"Orchestrator: {orch_stats['active_niches']} active, "
+                        f"{orch_stats['queued_requests']} queued")
+            
+            self.osc_handler.send_confirm(stats_msg)
+            
+            # Also send as structured data
+            self.osc_handler.client.send_message("/stats_result", [
+                stats.get("recordings", 0),
+                stats.get("segments", 0),
+                stats.get("effects", 0),
+                stats.get("presets", 0),
+                embedding_count,
+                orch_stats["active_niches"],
+                orch_stats["queued_requests"]
+            ])
+            
+            logger.info(f"Stats: {stats_msg}")
+            
+        except Exception as e:
+            error_msg = f"stats failed: {e}"
+            logger.error(error_msg)
+            self.osc_handler.send_error(error_msg)
+    
+    # Keep existing add handlers unchanged - only OSC protocol changes
     def _handle_add_recording(self, unused_addr: str, *args):
-        """Handle add recording requests - creates recording + auto-segment."""
+        """Handle add recording requests."""
         try:
             parsed = self.osc_handler.parse_args(*args)
             path = parsed.get('arg1', '').strip()
@@ -277,7 +372,7 @@ class HibikidoServer:
             
             description = metadata.get('description', f"Recording: {path}")
             
-            # Add recording to database (path-based, rejects duplicates)
+            # Add recording to database
             success = self.db_manager.add_recording(
                 path=path,
                 description=description
@@ -290,7 +385,6 @@ class HibikidoServer:
             # Auto-create full-length segment
             segment_description = f"Full recording: {description}"
             
-            # Create embedding for segment with hierarchical context
             segment_embedding_text = self.text_processor.create_segment_embedding_text(
                 segment={'description': segment_description},
                 recording={'description': description, 'path': path},
@@ -299,10 +393,8 @@ class HibikidoServer:
             
             # Add embedding
             faiss_id = self.embedding_manager.add_embedding(segment_embedding_text)
-            if faiss_id is None:
-                logger.warning(f"Hibikidō Server: Failed to create embedding for auto-segment")
             
-            # Add auto-segment (references recording by path)
+            # Add auto-segment
             segment_success = self.db_manager.add_segment(
                 source_path=path,
                 segmentation_id="auto_full",
@@ -315,18 +407,17 @@ class HibikidoServer:
             
             if segment_success:
                 self.osc_handler.send_confirm(f"added recording: {path} with auto-segment")
-                logger.info(f"Hibikidō Server: Added recording: {path} with auto-segment at FAISS {faiss_id}")
+                logger.info(f"Added recording: {path} with auto-segment at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_confirm(f"added recording: {path} (segment creation failed)")
-                logger.warning(f"Hibikidō Server: Recording added but auto-segment failed: {path}")
-            
+                
         except Exception as e:
             error_msg = f"add_recording failed: {e}"
-            logger.error(f"Hibikidō Server: {error_msg}")
+            logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
 
     def _handle_add_effect(self, unused_addr: str, *args):
-        """Handle add effect requests - creates effect + default preset."""
+        """Handle add effect requests."""
         try:
             parsed = self.osc_handler.parse_args(*args)
             path = parsed.get('arg1', '').strip()
@@ -336,18 +427,15 @@ class HibikidoServer:
                 self.osc_handler.send_error("add_effect requires effect path")
                 return
             
-            # Parse metadata
             try:
                 metadata = json.loads(metadata_str) if metadata_str != '{}' else {}
             except json.JSONDecodeError:
                 self.osc_handler.send_error("invalid metadata JSON")
                 return
             
-            # Extract name from path if not provided
             name = metadata.get('name', path.split('/')[-1].split('.')[0])
             description = metadata.get('description', f"Effect: {name}")
             
-            # Add effect to database (path-based, rejects duplicates)
             success = self.db_manager.add_effect(
                 path=path,
                 name=name,
@@ -365,12 +453,8 @@ class HibikidoServer:
                 effect={'description': description, 'name': name, 'path': path}
             )
             
-            # Add embedding for default preset
             faiss_id = self.embedding_manager.add_embedding(preset_embedding_text)
-            if faiss_id is None:
-                logger.warning(f"Hibikidō Server: Failed to create embedding for default preset")
             
-            # Add default preset (separate collection, references effect by path)
             preset_success = self.db_manager.add_preset(
                 effect_path=path,
                 parameters=[],
@@ -381,14 +465,13 @@ class HibikidoServer:
             
             if preset_success:
                 self.osc_handler.send_confirm(f"added effect: {path} with default preset")
-                logger.info(f"Hibikidō Server: Added effect: {path} with default preset at FAISS {faiss_id}")
+                logger.info(f"Added effect: {path} with default preset at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_confirm(f"added effect: {path} (preset creation failed)")
-                logger.warning(f"Hibikidō Server: Effect added but default preset failed: {path}")
-            
+                
         except Exception as e:
             error_msg = f"add_effect failed: {e}"
-            logger.error(f"Hibikidō Server: {error_msg}")
+            logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
 
     def _handle_add_segment(self, unused_addr: str, *args):
@@ -402,14 +485,12 @@ class HibikidoServer:
                 self.osc_handler.send_error("add_segment requires description")
                 return
             
-            # Parse metadata
             try:
                 metadata = json.loads(metadata_str) if metadata_str != '{}' else {}
             except json.JSONDecodeError:
                 self.osc_handler.send_error("invalid metadata JSON")
                 return
             
-            # Required fields
             source_path = metadata.get('source_path')
             if not source_path:
                 self.osc_handler.send_error("source_path required in metadata")
@@ -419,39 +500,26 @@ class HibikidoServer:
             start = float(metadata.get('start', 0.0))
             end = float(metadata.get('end', 1.0))
 
-            # Validate normalized values (0.0 to 1.0)
-            if not (0.0 <= start <= 1.0):
-                self.osc_handler.send_error(f"start must be between 0.0 and 1.0, got {start}")
-                return
-
-            if not (0.0 <= end <= 1.0):
-                self.osc_handler.send_error(f"end must be between 0.0 and 1.0, got {end}")
-                return
-
-            if start >= end:
-                self.osc_handler.send_error(f"start ({start}) must be less than end ({end})")
+            if not (0.0 <= start <= 1.0) or not (0.0 <= end <= 1.0) or start >= end:
+                self.osc_handler.send_error("invalid start/end values (must be 0.0-1.0)")
                 return
             
-            # Verify recording exists
             recording = self.db_manager.get_recording_by_path(source_path)
             if not recording:
                 self.osc_handler.send_error(f"recording not found: {source_path}")
                 return
             
-            # Create hierarchical embedding text
             embedding_text = self.text_processor.create_segment_embedding_text(
                 segment={'description': description},
                 recording=recording,
                 segmentation={'description': f'Manual segmentation: {segmentation_id}'}
             )
             
-            # Add embedding
             faiss_id = self.embedding_manager.add_embedding(embedding_text)
             if faiss_id is None:
                 self.osc_handler.send_error("failed to create embedding")
                 return
             
-            # Add to database
             success = self.db_manager.add_segment(
                 source_path=source_path,
                 segmentation_id=segmentation_id,
@@ -464,13 +532,13 @@ class HibikidoServer:
             
             if success:
                 self.osc_handler.send_confirm(f"added segment for {source_path} [{start}-{end}]")
-                logger.info(f"Hibikidō Server: Added segment for {source_path} at FAISS {faiss_id}")
+                logger.info(f"Added segment for {source_path} at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_error("failed to add segment to database")
-            
+                
         except Exception as e:
             error_msg = f"add_segment failed: {e}"
-            logger.error(f"Hibikidō Server: {error_msg}")
+            logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
 
     def _handle_add_preset(self, unused_addr: str, *args):
@@ -484,14 +552,12 @@ class HibikidoServer:
                 self.osc_handler.send_error("add_preset requires description")
                 return
             
-            # Parse metadata
             try:
                 metadata = json.loads(metadata_str) if metadata_str != '{}' else {}
             except json.JSONDecodeError:
                 self.osc_handler.send_error("invalid metadata JSON")
                 return
             
-            # Required fields
             effect_path = metadata.get('effect_path')
             if not effect_path:
                 self.osc_handler.send_error("effect_path required in metadata")
@@ -499,25 +565,21 @@ class HibikidoServer:
             
             parameters = metadata.get('parameters', [])
             
-            # Verify effect exists
             effect = self.db_manager.get_effect_by_path(effect_path)
             if not effect:
                 self.osc_handler.send_error(f"effect not found: {effect_path}")
                 return
             
-            # Create hierarchical embedding text
             embedding_text = self.text_processor.create_preset_embedding_text(
                 preset={'description': description, 'parameters': parameters},
                 effect=effect
             )
             
-            # Add embedding
             faiss_id = self.embedding_manager.add_embedding(embedding_text)
             if faiss_id is None:
                 self.osc_handler.send_error("failed to create embedding")
                 return
             
-            # Add to database (separate presets collection)
             success = self.db_manager.add_preset(
                 effect_path=effect_path,
                 parameters=parameters,
@@ -528,21 +590,20 @@ class HibikidoServer:
             
             if success:
                 self.osc_handler.send_confirm(f"added preset for {effect_path}")
-                logger.info(f"Hibikidō Server: Added preset for {effect_path} at FAISS {faiss_id}")
+                logger.info(f"Added preset for {effect_path} at FAISS {faiss_id}")
             else:
                 self.osc_handler.send_error("failed to add preset to database")
-            
+                
         except Exception as e:
             error_msg = f"add_preset failed: {e}"
-            logger.error(f"Hibikidō Server: {error_msg}")
+            logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
     
     def _handle_rebuild_index(self, unused_addr: str, *args):
-        """Handle rebuild index requests with hierarchical context."""
+        """Handle rebuild index requests."""
         try:
-            logger.info("Hibikidō Server: Rebuilding FAISS index from database with hierarchical context...")
+            logger.info("Rebuilding FAISS index from database...")
             
-            # Use text processor for hierarchical embedding text
             stats = self.embedding_manager.rebuild_from_database(
                 self.db_manager, 
                 self.text_processor
@@ -553,110 +614,22 @@ class HibikidoServer:
                 result_msg += f" ({stats['errors']} errors)"
             
             self.osc_handler.send_confirm(result_msg)
-            logger.info(f"Hibikidō Server: Index rebuild completed: {result_msg}")
+            logger.info(f"Index rebuild completed: {result_msg}")
             
         except Exception as e:
             error_msg = f"rebuild_index failed: {e}"
-            logger.error(f"Hibikidō Server: {error_msg}")
-            self.osc_handler.send_error(error_msg)
-    
-    def _handle_stats(self, unused_addr: str, *args):
-        """Handle stats requests."""
-        try:
-            stats = self.db_manager.get_stats()
-            embedding_count = self.embedding_manager.get_total_embeddings()
-            
-            # Send detailed stats
-            stats_msg = (f"Database: {stats.get('recordings', 0)} recordings, "
-                        f"{stats.get('segments', 0)} segments, "
-                        f"{stats.get('effects', 0)} effects, "
-                        f"{stats.get('presets', 0)} presets. "
-                        f"FAISS: {embedding_count} embeddings")
-            
-            self.osc_handler.send_confirm(stats_msg)
-            
-            # Also send as structured data
-            self.osc_handler.client.send_message("/stats_result", [
-                stats.get("recordings", 0),
-                stats.get("segments", 0),
-                stats.get("effects", 0),
-                stats.get("presets", 0),
-                embedding_count
-            ])
-            
-            logger.info(f"Hibikidō Server: Stats: {stats_msg}")
-            
-        except Exception as e:
-            error_msg = f"stats failed: {e}"
-            logger.error(f"Hibikidō Server: {error_msg}")
+            logger.error(error_msg)
             self.osc_handler.send_error(error_msg)
             
-    def _create_display_description(self, embedding_text: str) -> str:
-        """Create human-readable description from embedding text."""
-        try:
-            if not embedding_text:
-                return "untitled"
-            
-            # Simple reverse processing - clean up the embedding text for display
-            # Remove common embedding artifacts and make it more natural
-            
-            words = embedding_text.split()
-            
-            # If we have spaCy, try to make it more natural
-            if hasattr(self, 'text_processor') and self.text_processor.nlp and self.text_processor.spacy_working:
-                try:
-                    doc = self.text_processor.nlp(embedding_text)
-                    
-                    # Extract key phrases and entities
-                    noun_phrases = []
-                    for chunk in doc.noun_chunks:
-                        if len(chunk.text.strip()) > 2:
-                            noun_phrases.append(chunk.text.strip())
-                    
-                    if noun_phrases:
-                        # Use the first good noun phrase as description
-                        description = noun_phrases[0]
-                        # Add additional context if short
-                        if len(description.split()) < 3 and len(noun_phrases) > 1:
-                            description = f"{description} {noun_phrases[1]}"
-                        return description[:60]  # Limit length
-                    
-                except Exception:
-                    pass  # Fall back to simple processing
-            
-            # Simple fallback processing
-            # Take first 4-6 meaningful words and clean them up
-            meaningful_words = []
-            for word in words[:8]:  # Look at first 8 words
-                word = word.strip().lower()
-                if len(word) > 2 and word not in ['the', 'and', 'for', 'with', 'this', 'that']:
-                    meaningful_words.append(word)
-                if len(meaningful_words) >= 6:
-                    break
-            
-            if meaningful_words:
-                description = " ".join(meaningful_words[:6])
-                # Capitalize first word
-                if description:
-                    description = description[0].upper() + description[1:]
-                return description[:60]  # Limit length
-            
-            # Ultimate fallback
-            return embedding_text[:40].strip() or "untitled"
-            
-        except Exception as e:
-            logger.warning(f"Hibikidō Server: Failed to create display description: {e}")
-            return "untitled"
-    
     def _handle_stop(self, unused_addr: str, *args):
         """Handle stop requests."""
-        logger.info("Hibikidō Server: Received stop command")
+        logger.info("Received stop command")
         self.osc_handler.send_confirm("stopping")
         self.shutdown()
     
     def _shutdown_handler(self, signum, frame):
         """Handle shutdown signals."""
-        logger.info(f"Hibikidō Server: Received signal {signum}, shutting down...")
+        logger.info(f"Received signal {signum}, shutting down...")
         self.shutdown()
     
     def shutdown(self):
@@ -670,9 +643,9 @@ class HibikidoServer:
         try:
             self.osc_handler.close()
             self.db_manager.close()
-            logger.info("Hibikidō Server: Shutdown complete")
+            logger.info("Shutdown complete")
         except Exception as e:
-            logger.error(f"Hibikidō Server: Error during shutdown: {e}")
+            logger.error(f"Error during shutdown: {e}")
         
         sys.exit(0)
 
@@ -683,7 +656,7 @@ def load_config(config_file: str) -> Dict[str, Any]:
         with open(config_file, 'r') as f:
             return json.load(f)
     except Exception as e:
-        logger.error(f"Hibikidō Server: Failed to load config file {config_file}: {e}")
+        logger.error(f"Failed to load config file {config_file}: {e}")
         return {}
 
 
@@ -709,16 +682,16 @@ def main():
     server = HibikidoServer(config)
     
     if not server.initialize():
-        logger.error("Hibikidō Server: Failed to initialize server")
+        logger.error("Failed to initialize server")
         sys.exit(1)
     
     try:
         server.start()
     except KeyboardInterrupt:
-        logger.info("Hibikidō Server: Interrupted by user")
+        logger.info("Interrupted by user")
         server.shutdown()
     except Exception as e:
-        logger.error(f"Hibikidō Server: Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}")
         server.shutdown()
         sys.exit(1)
 
